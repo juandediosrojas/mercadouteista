@@ -7,31 +7,17 @@ import {
   Tag,
 } from "lucide-react";
 import { useAuth } from "./contexts/AuthContext";
-import LoginView from "./views/LoginView";
-import RegisterView from "./views/RegisterView";
-import { getProductsPage, getCategories, getSellers, getProductsByCategory } from "../firebase/productService";
+import ProfileView from "./views/ProfileView";
+import { getProductsPage, getCategories, getSellers } from "../firebase/productService";
 import { getWishlist, addWishlist, removeWishlist } from "../firebase/wishlistService";
+import { getCartlist, addCartlist, removeCartlist, createOrder } from "../firebase/cartService";
+import { getUser, notifications as getNotifications, notificationsSeller as getNotificationsSeller } from "../firebase/userService";
 import type { Product, CartItem, AppView, Category, Seller } from "./types";
+import { getSellerByOwner } from "../firebase/sellerService";
 
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-// const categories = [
-//   { id: "all", label: "Todo", emoji: "🛍️" },
-//   { id: "food", label: "Comida", emoji: "🍱" },
-//   { id: "crafts", label: "Artesanías", emoji: "🧶" },
-//   { id: "services", label: "Servicios", emoji: "💼" },
-//   { id: "clothing", label: "Ropa", emoji: "👕" },
-//   { id: "tech", label: "Tecnología", emoji: "💻" },
-// ];
-
-// const FEATURED_SELLERS = [
-//   { name: "Cocina de Doña Carmen", tag: "Comida", img: "https://images.unsplash.com/photo-1581349485608-9469926a8e5e?w=120&h=120&fit=crop&auto=format", rating: 4.8 },
-//   { name: "Artesanías Luna", tag: "Manualidades", img: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=120&h=120&fit=crop&auto=format", rating: 4.7 },
-//   { name: "TechStore Campus", tag: "Tecnología", img: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=120&h=120&fit=crop&auto=format", rating: 4.5 },
-//   { name: "Tutores Pro", tag: "Servicios", img: "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=120&h=120&fit=crop&auto=format", rating: 5.0 },
-//   { name: "Moda Campus", tag: "Ropa", img: "https://images.unsplash.com/photo-1562157873-818bc0726f68?w=120&h=120&fit=crop&auto=format", rating: 4.4 },
-// ];
 
 const ORDERS_DATA = [
   {
@@ -85,11 +71,12 @@ const fmt = (price: number) =>
     maximumFractionDigits: 0,
   }).format(price);
 
-function StarsRow({ rating, count }: { rating: number; count?: number }) {
+function StarsRow({ rating, count }: { rating?: number; count?: number }) {
+  const display = Number.isFinite(rating as number) ? (rating as number).toFixed(1) : "0.0";
   return (
     <span className="flex items-center gap-1">
       <Star size={11} className="fill-amber-400 text-amber-400" />
-      <span className="text-xs font-semibold text-foreground">{rating.toFixed(1)}</span>
+      <span className="text-xs font-semibold text-foreground">{display}</span>
       {count !== undefined && (
         <span className="text-xs text-muted-foreground">({count})</span>
       )}
@@ -104,6 +91,9 @@ export default function Marketplace() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [wishlist, setWishlist] = useState<string[]>([]);
@@ -112,9 +102,50 @@ export default function Marketplace() {
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
   const [featuredSellers, setFeaturedSellers] = useState<Seller[]>([]);
+  const [sellerData, setSellerData] = useState<any>(null);
   const { user, loading, logout } = useAuth();
   const [lastDoc, setLastDoc] = useState<any>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [openRegisterBusinessForm, setOpenRegisterBusinessForm] = useState(false);
+  const [placingOrder, setPlacingOrder] = useState(false);
+
+  useEffect(() => {
+
+    if (!user) {
+      setSellerData(null);
+      return;
+    }
+    const uid = user.uid;
+
+    async function loadInfoUser() {
+
+      const userData = await getUser(uid);
+
+      if (userData) {
+        (user as any).major = userData.career ?? undefined;
+        (user as any).semester = userData.semester ?? undefined;
+        (user as any).seller = userData.seller ?? false;
+
+      }
+
+      if (userData?.seller === undefined) {
+        (user as any).seller = false;
+      }
+
+      if (userData?.seller === true) {
+        const sellerProfile = await getSellerByOwner(uid);
+        (user as any).sellerData = sellerProfile;
+        setSellerData(sellerProfile);
+        console.log("Datos del vendedor:", sellerProfile);
+      } else {
+        setSellerData(null);
+      }
+    }
+
+    loadInfoUser();
+
+  }, [user]);
+
 
   useEffect(() => {
 
@@ -132,6 +163,74 @@ export default function Marketplace() {
     loadWishlist();
 
   }, [user]);
+
+  useEffect(() => {
+
+    if (!user) {
+      setNotifications([]);
+      return;
+    }
+
+    const uid = user.uid;
+    setLoadingNotifications(true);
+
+    async function loadNotificationsList() {
+      try {
+        const sellerId = sellerData?.id ?? (typeof sellerData === "string" ? sellerData : undefined);
+        const notifs = sellerId ? await getNotificationsSeller(sellerId) : await getNotifications(uid);
+        setNotifications(notifs);
+      } catch (err) {
+        console.error("Error loading notifications:", err);
+        setNotifications([]);
+      } finally {
+        setLoadingNotifications(false);
+      }
+    }
+
+    loadNotificationsList();
+
+  }, [user, sellerData]);
+
+  useEffect(() => {
+
+    if (!user) {
+      setCart([]);
+      return;
+    }
+
+    if (view !== "home" || products.length === 0) return;
+
+    async function loadCart() {
+      try {
+        const cartItems = await getCartlist(user!.uid);
+        if (cartItems.length === 0) {
+          setCart([]);
+          return;
+        }
+
+        setCart((prev) =>
+          cartItems
+            .map((entry: any) => {
+              // support multiple shapes: string id or object { id/productId, quantity/qty }
+              const productId = typeof entry === "string" ? entry : entry.productId ?? entry.id;
+              const qty = typeof entry === "string" ? 1 : entry.quantity ?? entry.qty ?? 1;
+
+              const product = products.find((p) => p.id === productId);
+              if (!product) return null;
+              return { product, qty };
+            })
+            .filter((item): item is CartItem => item !== null)
+        );
+        // console.log("caritems: ", cartItems);
+
+      } catch (err) {
+        console.error("Error loading cart from firestore", err);
+      }
+    }
+
+    loadCart();
+
+  }, [user, view, products]);
 
   useEffect(() => {
 
@@ -181,6 +280,24 @@ export default function Marketplace() {
 
   }, [activeCategory]);
 
+  useEffect(() => {
+    if (view !== "profile" || !openRegisterBusinessForm) return;
+
+    const timeout = window.setTimeout(() => {
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+      const target = buttons.find((button) =>
+        button.textContent?.trim().startsWith("Registrar mi negocio")
+      );
+
+      if (target) {
+        target.click();
+        setOpenRegisterBusinessForm(false);
+      }
+    }, 150);
+
+    return () => window.clearTimeout(timeout);
+  }, [view, openRegisterBusinessForm]);
+
   if (loadingProducts) {
 
     return (
@@ -199,24 +316,48 @@ export default function Marketplace() {
   }
 
 
+
   const cartCount = cart.reduce((s, i) => s + i.qty, 0);
   const cartTotal = cart.reduce((s, i) => s + i.product.price * i.qty, 0);
 
-  const addToCart = (product: Product) => {
+  const addToCart = async (product: Product) => {
     setCart((prev) => {
       const hit = prev.find((i) => i.product.id === product.id);
       if (hit) return prev.map((i) => i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i);
 
       return [...prev, { product, qty: 1 }];
     });
+
+    if (!user) return;
+    try {
+      const existing = cart.find(i => i.product.id === product.id);
+      const newQty = existing ? existing.qty + 1 : 1;
+      await addCartlist(user.uid, product.id, newQty);
+    } catch (err) {
+      console.error("Error updating cart in firestore", err);
+    }
   };
 
-  const updateQty = (id: string, delta: number) => {
+  const updateQty = async (id: string, delta: number) => {
     setCart((prev) =>
       prev
         .map((i) => i.product.id === id ? { ...i, qty: i.qty + delta } : i)
         .filter((i) => i.qty > 0)
     );
+
+    if (!user) return;
+
+    try {
+      const item = cart.find(i => i.product.id === id);
+      const newQty = item ? item.qty + delta : delta;
+      if (newQty > 0) {
+        await addCartlist(user.uid, id, newQty);
+      } else {
+        await removeCartlist(user.uid, id);
+      }
+    } catch (err) {
+      console.error("Error syncing cart qty with firestore", err);
+    }
   };
 
   const toggleWishlist = async (productId: string) => {
@@ -241,11 +382,48 @@ export default function Marketplace() {
 
   };
 
-  const placeOrder = () => {
-    setOrderPlaced(true);
-    setCart([]);
-    setCartOpen(false);
-    setTimeout(() => setOrderPlaced(false), 3500);
+  const placeOrder = async () => {
+    // Agrupar los ítems del carrito por vendedor y crear un pedido por vendedor
+    const grouped: Record<string, { productId: string; qty: number; price: number; image: string; name: string }[]> = {};
+
+    cart.forEach(ci => {
+      const sellerId = ci.product.sellerId || 'unknown';
+      if (!grouped[sellerId]) grouped[sellerId] = [];
+      grouped[sellerId].push({
+        productId: ci.product.id,
+        qty: ci.qty,
+        price: ci.product.price,
+        image: ci.product.image,
+        name: ci.product.name
+      });
+    });
+
+    try {
+      // Crear una orden por cada vendedor
+      const orderPromises = Object.entries(grouped).map(([sellerId, items]) =>
+        createOrder(user!.uid, sellerId, items)
+      );
+
+      const createdOrderIds = await Promise.all(orderPromises);
+      console.log('Orders created:', createdOrderIds);
+
+      // si todo sale bien, eliminar los items del carrito en Firestore
+      try {
+        const currentCart = [...cart];
+        await Promise.all(currentCart.map(ci =>
+          removeCartlist(user!.uid, ci.product.id)
+        ));
+      } catch (rmErr) {
+        console.error('Error removing cart items:', rmErr);
+      }
+
+      setOrderPlaced(true);
+      setCart([]);
+      setCartOpen(false);
+      setTimeout(() => setOrderPlaced(false), 3500);
+    } catch (error) {
+      console.error('Error placing orders:', error);
+    }
   };
 
   const filteredProducts = products.filter((p) => {
@@ -265,7 +443,7 @@ export default function Marketplace() {
 
 
     if (!lastDoc) return;
-    console.log("lastDoc actual:", lastDoc?.id);
+    // console.log("lastDoc actual:", lastDoc?.id);
 
     setLoadingMore(true);
 
@@ -287,6 +465,20 @@ export default function Marketplace() {
     }
 
   };
+
+  const profileUser = user
+    ? {
+      uid: user.uid,
+      displayName: user.displayName ?? undefined,
+      email: user.email ?? undefined,
+      phone: (user as any).phone ?? undefined,
+      major: (user as { major?: string }).major ?? undefined,
+      photoURL: user.photoURL ?? undefined,
+      semester: (user as { semester?: string }).semester ?? undefined,
+      seller: (user as { seller?: boolean }).seller ?? false
+    }
+    : undefined;
+
   const isHome = view === "home";
   if (loading) {
     return (
@@ -318,8 +510,8 @@ export default function Marketplace() {
               <Store size={15} className="text-primary-foreground" />
             </div>
             <div className="hidden sm:block leading-none">
-              <p className="text-sm font-bold text-foreground font-display">MercadoU</p>
-              <p className="text-[10px] text-muted-foreground">Universidad Central</p>
+              <p className="text-sm font-bold text-foreground font-display">Mercado UTS</p>
+              <p className="text-[10px] text-muted-foreground">Unidades Tecnologicas de Santander</p>
             </div>
           </button>
 
@@ -344,7 +536,10 @@ export default function Marketplace() {
           </div>
 
           {/* Bell */}
-          <button className="relative p-2 hover:bg-secondary rounded-xl transition shrink-0">
+          <button
+            onClick={() => setNotificationsOpen(true)}
+            className="relative p-2 hover:bg-secondary rounded-xl transition shrink-0"
+          >
             <Bell size={19} className="text-foreground" />
             <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-background" />
           </button>
@@ -372,7 +567,7 @@ export default function Marketplace() {
 
           <button
             onClick={logout}
-            className="px-3 py-2 rounded-xl bg-red-500 text-white text-sm"
+            className="px-3 py-2 rounded-xl bg-primary text-white text-sm"
           >
             Salir
           </button>
@@ -525,6 +720,7 @@ export default function Marketplace() {
               <button
                 onClick={loadMore}
                 disabled={loadingMore || !lastDoc}
+                className="px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-2xl hover:bg-primary/90 transition active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
 
                 {loadingMore
@@ -563,7 +759,7 @@ export default function Marketplace() {
             )}
 
             {/* Seller CTA */}
-            {activeCategory === "all" && !searchQuery && (
+            {activeCategory === "all" && !searchQuery && !(user as any)?.seller && (
               <div className="mt-6 p-5 bg-gradient-to-br from-secondary to-muted rounded-3xl border border-border flex items-center justify-between gap-4">
                 <div>
                   <p className="font-display text-base font-bold text-foreground">¿Tienes un negocio?</p>
@@ -571,7 +767,13 @@ export default function Marketplace() {
                     Registra tu microempresa y empieza a vender en el campus hoy mismo.
                   </p>
                 </div>
-                <button className="shrink-0 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-semibold rounded-2xl hover:bg-primary/90 transition active:scale-95 whitespace-nowrap shadow-sm">
+                <button
+                  onClick={() => {
+                    setView("profile");
+                    setOpenRegisterBusinessForm(true);
+                  }}
+                  className="shrink-0 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-semibold rounded-2xl hover:bg-primary/90 transition active:scale-95 whitespace-nowrap shadow-sm"
+                >
                   Registrarse
                 </button>
               </div>
@@ -610,64 +812,7 @@ export default function Marketplace() {
         )}
 
         {/* ── Profile View ── */}
-        {view === "profile" && (
-          <div className="pt-6">
-            {/* Avatar card */}
-            <div className="flex items-center gap-4 mb-6 p-5 bg-card rounded-3xl border border-border">
-              <div className="w-16 h-16 rounded-2xl overflow-hidden bg-muted shrink-0 border border-border">
-                <img
-                  src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop&auto=format"
-                  alt="Foto de perfil de Valentina"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-display text-lg font-bold text-foreground leading-tight">
-                  {user?.displayName}
-                </p>
-                <p className="text-sm text-muted-foreground">Ingeniería de Sistemas · Semestre 6</p>
-                <p className="text-xs text-primary mt-0.5 truncate">{user?.email}</p>
-              </div>
-            </div>
-
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              {[
-                { label: "Pedidos", value: "12" },
-                { label: "Guardados", value: `${wishlist.length}` },
-                { label: "Reseñas", value: "5" },
-              ].map(({ label, value }) => (
-                <div key={label} className="bg-card border border-border rounded-2xl p-3 text-center">
-                  <p className="font-display text-xl font-bold text-primary">{value}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Menu items */}
-            {[
-              { icon: ClipboardList, label: "Historial de pedidos", sub: "12 pedidos realizados" },
-              { icon: Heart, label: "Lista de deseos", sub: `${wishlist.length} productos guardados` },
-              { icon: MapPin, label: "Mis direcciones", sub: "Pabellón A, Bloque 3" },
-              { icon: Store, label: "Registrar mi negocio", sub: "Empieza a vender en el campus" },
-              { icon: User, label: "Editar perfil", sub: "Actualiza tus datos personales" },
-            ].map(({ icon: Icon, label, sub }) => (
-              <button
-                key={label}
-                className="w-full flex items-center gap-4 p-4 bg-card border border-border rounded-2xl mb-2 hover:bg-secondary transition text-left"
-              >
-                <div className="w-10 h-10 bg-secondary rounded-xl flex items-center justify-center shrink-0">
-                  <Icon size={17} className="text-primary" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-foreground">{label}</p>
-                  <p className="text-xs text-muted-foreground truncate">{sub}</p>
-                </div>
-                <ChevronRight size={15} className="text-muted-foreground shrink-0" />
-              </button>
-            ))}
-          </div>
-        )}
+        {view === "profile" && <ProfileView user={profileUser} wishlist={wishlist} view="profile" />}
       </main>
 
       {/* ───── Bottom Navigation (mobile) ───── */}
@@ -722,6 +867,82 @@ export default function Marketplace() {
           </button>
         ))}
       </div>
+      
+      <AnimatePresence>
+        {notificationsOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-foreground/30 backdrop-blur-sm"
+              onClick={() => setNotificationsOpen(false)}
+            />
+
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 28, stiffness: 280 }}
+              className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-sm bg-background shadow-2xl flex flex-col"
+            >
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+                <h2 className="font-display text-lg font-bold">
+                  Notificaciones
+                </h2>
+
+                <button
+                  onClick={() => setNotificationsOpen(false)}
+                  className="p-2 hover:bg-secondary rounded-xl transition"
+                >
+                  <X size={19} />
+                </button>
+              </div>
+
+                      <div className="flex-1 overflow-y-auto">
+                {loadingNotifications ? (
+                  <div className="flex items-center justify-center h-full text-muted-foreground">
+                    Cargando notificaciones...
+                  </div>
+                ) : notifications.length === 0 ? (
+                  <div className="flex flex-1 flex-col items-center justify-center text-center text-muted-foreground px-6 py-10 gap-3">
+                    <div className="w-16 h-16 bg-secondary rounded-2xl flex items-center justify-center">
+                      <Bell size={26} />
+                    </div>
+                    <p className="font-semibold text-foreground">Aún no tienes notificaciones.</p>
+                    <p className="text-sm">Las nuevas alertas aparecerán aquí.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 p-4">
+                    {notifications.map((item) => {
+                      const title = item.title ?? item.message ?? item.subject ?? "Notificación";
+                      const body = item.body ?? item.text ?? "";
+                      const createdAt = item.createdAt?.toDate
+                        ? item.createdAt.toDate().toLocaleString("es-CO")
+                        : typeof item.createdAt === "string"
+                          ? item.createdAt
+                          : item.createdAt
+                            ? new Date(item.createdAt).toLocaleString("es-CO")
+                            : "";
+                      return (
+                        <div key={item.id} className="bg-card border border-border rounded-3xl p-4">
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <p className="text-sm font-semibold text-foreground">{title}</p>
+                            {createdAt && (
+                              <span className="text-[10px] text-muted-foreground">{createdAt}</span>
+                            )}
+                          </div>
+                          {body && <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* ───── Cart Drawer ───── */}
       <AnimatePresence>
@@ -819,10 +1040,18 @@ export default function Marketplace() {
                     <span className="font-display text-xl font-bold text-foreground">{fmt(cartTotal)}</span>
                   </div>
                   <button
-                    onClick={placeOrder}
-                    className="w-full py-3.5 bg-primary text-primary-foreground font-bold rounded-2xl hover:bg-primary/90 transition active:scale-[0.98] shadow-sm"
+                    onClick={async () => {
+                      try {
+                        setPlacingOrder(true);
+                        await placeOrder();
+                      } finally {
+                        setPlacingOrder(false);
+                      }
+                    }}
+                    disabled={placingOrder}
+                    className="w-full py-3.5 bg-primary text-primary-foreground font-bold rounded-2xl hover:bg-primary/90 transition active:scale-[0.98] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Realizar Pedido
+                    {placingOrder ? "Creando orden..." : "Realizar Pedido"}
                   </button>
                 </div>
               )}
@@ -932,10 +1161,12 @@ export default function Marketplace() {
             <div>
               <p className="text-sm font-bold">¡Pedido realizado!</p>
               <p className="text-xs opacity-70">Recibirás una notificación cuando esté listo</p>
+
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+
     </div>
   );
 }

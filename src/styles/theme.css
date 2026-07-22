@@ -1,83 +1,156 @@
 @custom-variant dark (&:is(.dark *));
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   MercadoU — Tema institucional
+   Paleta base:
+     Verde oscuro  #34531F  (Pantone 2266 C) → primary
+     Verde profundo #132F20 (Pantone 5535 C) → foreground / texto
+     Rojo           #6D100A (Pantone 4975 C) → accent / CTA secundario
+     Crema          #F8E9D4 (Pantone 451 C)  → SOLO detalles decorativos
+     Gris           #575756 (Cool Gray 4 C)  → muted text
+
+   Cambios respecto al tema anterior:
+   - Fondo cambia de crema pura (#F8E9D4) a blanco hueso (#FAFAF8)
+     para mejorar el contraste de las cards y el texto
+   - Cards pasan de blanco puro (#FFF) a blanco levemente cálido (#FFFFFF
+     con sombra más visible) para que destaquen sobre el fondo
+   - Secondary y muted ahora derivan del verde muy tenue, no del crema
+   - El crema #F8E9D4 se reserva para acentos decorativos (hero tags,
+     sidebar accent, indicadores especiales)
+   - input-background más claro para que el campo de búsqueda sea legible
+   ───────────────────────────────────────────────────────────────────────────── */
+
 :root {
   --font-size: 16px;
-  --background: #FAF7F2;
-  --foreground: #1C1208;
+
+  /* Superficies */
+  --background: #F5F4F1;
+  /* Blanco hueso cálido — no tan crema, no tan blanco */
+  --foreground: #132F20;
+  /* Verde profundo — máximo contraste */
+
+  /* Cards y popovers */
   --card: #FFFFFF;
-  --card-foreground: #1C1208;
+  --card-foreground: #132F20;
   --popover: #FFFFFF;
-  --popover-foreground: #1C1208;
-  --primary: #C85A20;
+  --popover-foreground: #132F20;
+
+  /* Primary — verde institucional */
+  --primary: #34531F;
   --primary-foreground: #FFFFFF;
-  --secondary: #EDE9E2;
-  --secondary-foreground: #1C1208;
-  --muted: #EDE9E2;
-  --muted-foreground: #7A6F5E;
-  --accent: #E8A020;
-  --accent-foreground: #1C1208;
-  --destructive: #d4183d;
-  --destructive-foreground: #ffffff;
-  --border: rgba(28, 18, 8, 0.09);
+
+  /* Secondary — verde muy tenue para chips, fondos de inputs */
+  --secondary: #EBF0E6;
+  --secondary-foreground: #132F20;
+
+  /* Muted — para áreas de poco protagonismo */
+  --muted: #E2EAD9;
+  --muted-foreground: #575756;
+
+  /* Accent — rojo institucional (botones de acción secundaria, tags) */
+  --accent: #6D100A;
+  --accent-foreground: #FFFFFF;
+
+  /* Destructive */
+  --destructive: #6D100A;
+  --destructive-foreground: #FFFFFF;
+
+  /* Bordes — más visibles que antes para dar estructura */
+  --border: rgba(19, 47, 32, 0.12);
+  --border-strong: rgba(19, 47, 32, 0.22);
+
+  /* Inputs */
   --input: transparent;
-  --input-background: #EDE9E2;
-  --switch-background: #c9b9a8;
+  --input-background: #EBF0E6;
+
+  /* Switch */
+  --switch-background: #A8C895;
+
+  /* Tipografía */
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: #C85A20;
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+
+  /* Ring de foco */
+  --ring: #34531F;
+
+  /* Charts — tonos del ecosistema verde/tierra */
+  --chart-1: oklch(0.45 0.12 140);
+  /* verde medio */
+  --chart-2: oklch(0.32 0.10 162);
+  /* verde oscuro */
+  --chart-3: oklch(0.38 0.18 25);
+  /* rojo tierra */
+  --chart-4: oklch(0.72 0.14 97);
+  /* amarillo ocre */
+  --chart-5: oklch(0.60 0.10 142);
+  /* verde claro */
+
+  /* Radio */
   --radius: 0.875rem;
-  --sidebar: #EDE9E2;
-  --sidebar-foreground: #1C1208;
-  --sidebar-primary: #C85A20;
+
+  /* Sidebar */
+  --sidebar: #E2EAD9;
+  --sidebar-foreground: #132F20;
+  --sidebar-primary: #34531F;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #FAF7F2;
-  --sidebar-accent-foreground: #1C1208;
-  --sidebar-border: rgba(28, 18, 8, 0.09);
-  --sidebar-ring: #C85A20;
+  --sidebar-accent: #F8E9D4;
+  /* crema — aquí sí es un buen acento */
+  --sidebar-accent-foreground: #132F20;
+  --sidebar-border: rgba(19, 47, 32, 0.10);
+  --sidebar-ring: #34531F;
 }
 
+/* ── Dark mode ─────────────────────────────────────────────────────────────── */
 .dark {
-  --background: #1C1208;
-  --foreground: #FAF7F2;
-  --card: #2A1E0F;
-  --card-foreground: #FAF7F2;
-  --popover: #2A1E0F;
-  --popover-foreground: #FAF7F2;
-  --primary: #E07030;
-  --primary-foreground: #FFFFFF;
-  --secondary: #332416;
-  --secondary-foreground: #FAF7F2;
-  --muted: #332416;
-  --muted-foreground: #B09070;
-  --accent: #E8A020;
-  --accent-foreground: #1C1208;
-  --destructive: oklch(0.396 0.141 25.723);
-  --destructive-foreground: oklch(0.637 0.237 25.331);
-  --border: rgba(250, 247, 242, 0.1);
-  --input: rgba(250, 247, 242, 0.1);
-  --ring: #E07030;
-  --font-weight-medium: 500;
-  --font-weight-normal: 400;
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: #2A1E0F;
-  --sidebar-foreground: #FAF7F2;
-  --sidebar-primary: #E07030;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #332416;
-  --sidebar-accent-foreground: #FAF7F2;
-  --sidebar-border: rgba(250, 247, 242, 0.1);
-  --sidebar-ring: #E07030;
+  --background: #141E12;
+  --foreground: #EDF2E8;
+
+  --card: #1E2B1A;
+  --card-foreground: #EDF2E8;
+  --popover: #1E2B1A;
+  --popover-foreground: #EDF2E8;
+
+  --primary: #6FAB44;
+  /* Verde más claro para que respire en dark */
+  --primary-foreground: #0D1A0A;
+
+  --secondary: #253320;
+  --secondary-foreground: #EDF2E8;
+
+  --muted: #253320;
+  --muted-foreground: #8FAF7E;
+
+  --accent: #B03020;
+  /* Rojo más luminoso en dark */
+  --accent-foreground: #FFFFFF;
+
+  --destructive: oklch(0.42 0.16 25);
+  --destructive-foreground: oklch(0.85 0.10 25);
+
+  --border: rgba(237, 242, 232, 0.10);
+  --border-strong: rgba(237, 242, 232, 0.18);
+  --input: rgba(237, 242, 232, 0.08);
+  --input-background: rgba(237, 242, 232, 0.06);
+  --switch-background: #3D6B2A;
+  --ring: #6FAB44;
+
+  --chart-1: oklch(0.60 0.15 140);
+  --chart-2: oklch(0.72 0.13 162);
+  --chart-3: oklch(0.65 0.20 25);
+  --chart-4: oklch(0.78 0.16 97);
+  --chart-5: oklch(0.68 0.12 142);
+
+  --sidebar: #1A2617;
+  --sidebar-foreground: #EDF2E8;
+  --sidebar-primary: #6FAB44;
+  --sidebar-primary-foreground: #0D1A0A;
+  --sidebar-accent: #253320;
+  --sidebar-accent-foreground: #EDF2E8;
+  --sidebar-border: rgba(237, 242, 232, 0.08);
+  --sidebar-ring: #6FAB44;
 }
 
+/* ── Tokens Tailwind ───────────────────────────────────────────────────────── */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -121,6 +194,7 @@
   --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 
+/* ── Base global ───────────────────────────────────────────────────────────── */
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -169,7 +243,9 @@
     font-size: var(--text-base);
     font-weight: var(--font-weight-medium);
     line-height: 1.5;
+    border-radius: red;
   }
+
 
   input {
     font-size: var(--text-base);
@@ -178,15 +254,33 @@
   }
 }
 
+/* ── Utilidades ────────────────────────────────────────────────────────────── */
 @layer utilities {
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+
   .font-display {
     font-family: var(--font-display);
+  }
+
+  /* Sombra para cards — más visible sobre el fondo hueso */
+  .card-shadow {
+    box-shadow: 0 1px 3px rgba(19, 47, 32, 0.08), 0 1px 2px rgba(19, 47, 32, 0.06);
+  }
+
+  .card-shadow-md {
+    box-shadow: 0 4px 12px rgba(19, 47, 32, 0.10), 0 2px 4px rgba(19, 47, 32, 0.06);
+  }
+
+  /* Tag decorativo en crema — el uso correcto del #F8E9D4 */
+  .tag-cream {
+    background-color: #F8E9D4;
+    color: #6D100A;
   }
 }

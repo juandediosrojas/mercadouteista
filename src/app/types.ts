@@ -10,6 +10,7 @@ export type Product = {
   reviews: number;
   badge: string | null;
   image: string;
+  stock: number;
   description: string;
   location: string;
   active: boolean;
@@ -35,3 +36,15 @@ export type Seller = {
   image: string;
   rating: number;
 };
+
+
+export type User = {
+    uid?: string
+    displayName?: string
+    email?: string
+    phone?: string
+    major?: string
+    semester?: string
+    photoURL?: string
+    seller?: boolean
+}

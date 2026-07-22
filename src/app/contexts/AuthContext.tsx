@@ -17,6 +17,8 @@ import {
   updateProfile,
 } from "firebase/auth";
 
+import Swal from "sweetalert2";
+
 import { auth, db } from "../../firebase/config";
 
 import {
@@ -57,8 +59,34 @@ export function AuthProvider({
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        const lastSignInTime = firebaseUser.metadata?.lastSignInTime;
+        
+        if (lastSignInTime) {
+          const lastSignIn = new Date(lastSignInTime).getTime();
+          const now = new Date().getTime();
+          // 2 hours in milliseconds
+          const timeMax = 2 * 60 * 60 * 1000;
+          
+          if (now - lastSignIn > timeMax) {
+            signOut(auth);
+            setUser(null);
+            setLoading(false);
+            Swal.fire({
+              icon: 'info',
+              title: 'Sesión expirada',
+              text: 'Tu sesión ha expirado. Por favor, inicia sesión nuevamente.',
+              position: 'top-end',
+              toast: true,
+              showConfirmButton: false,
+              timer: 3000,
+            });
+            return;
+          }
+        }
+      }
+      
       setUser(firebaseUser);
-
       setLoading(false);
     });
 
@@ -97,11 +125,24 @@ export function AuthProvider({
     email: string,
     password: string
   ) {
-    await signInWithEmailAndPassword(
-      auth,
-      email,
-      password
-    );
+    try {
+      await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+    } catch (error) {
+      console.error("Error logging in:", error);
+      Swal.fire({
+        icon: "error",
+        title: "Error al iniciar sesión",
+        text: "Las credenciales proporcionadas no son válidas.",
+        toast: true,
+        position: "top-end",
+        showConfirmButton: false,
+        timer: 3000,
+      });
+    }
   }
 
   async function logout() {
