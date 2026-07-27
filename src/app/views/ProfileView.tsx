@@ -37,7 +37,8 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
     const [firestoreUser, setFirestoreUser] = useState<ProfileViewProps['user'] | null>(null);
     const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([]);
     const sellerStatus = firestoreUser?.seller ?? false;
-    const [showSellerDashboard, setShowSellerDashboard] = useState(false);
+    // const [showSellerDashboard, setShowSellerDashboard] = useState(false);
+    const [profileSection, setProfileSection] = useState<"profile" | "dashboard">("profile");
 
     const categoryTranslationMap: Record<string, string> = {
         all: 'Todos',
@@ -79,6 +80,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
         category: "",
         schedule: "",
         location: "",
+        phone: "",
     });
 
     // Fetch Firestore user document when uid is provided
@@ -192,7 +194,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
             return;
         }
 
-        if (!businessData.name || !businessData.description || !businessData.category || !businessData.schedule || !businessData.location) {
+        if (!businessData.name || !businessData.description || !businessData.category || !businessData.schedule || !businessData.location || !businessData.phone) {
             console.error('All business fields are required');
             Swal.fire({
                 icon: 'error',
@@ -224,6 +226,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
             await addDoc(collection(db, 'sellers'), {
                 ownerId: id,
                 name: businessData.name,
+                phone: businessData.phone,
                 description: businessData.description,
                 tags: businessData.category,
                 rating: 0,
@@ -244,6 +247,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                 category: '',
                 schedule: '',
                 location: '',
+                phone: '',
             });
         } catch (err) {
             console.error('Failed to register business:', err);
@@ -273,6 +277,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
             name: '',
             description: '',
             category: '',
+            phone: '',
             schedule: '',
             location: '',
         });
@@ -289,12 +294,20 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
     };
 
 
-    if (view !== 'profile') {
+    // allow this view to render either the profile or the seller dashboard
+    if (view !== 'profile' && view !== 'sellerDashboard') {
         return null;
     }
     // console.log("Rendering ProfileView with user:", user, "\n and wishlist:", wishlist, "and firestoreUser:", firestoreUser, "and sellerStatus:", sellerStatus);
     const isLoading = !firestoreUser; // ajusta esto a tu estado real de carga
-
+    if (profileSection === "dashboard") {
+        return (
+            <SellerDashboard
+                uid={user?.uid ?? ""}
+                onBack={() => setProfileSection("profile")}
+            />
+        );
+    }
     return (
         <div className="pt-6">
             {/* Avatar card */}
@@ -420,7 +433,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                             } else if (label === "Registrar mi negocio" && !sellerStatus) {
                                 setIsRegistering(true);
                             } else if (label === "Mi negocio" && sellerStatus) {
-                                setShowSellerDashboard(true);
+                                setProfileSection("dashboard");
                             } else {
                                 Swal.fire({
                                     icon: 'info',
@@ -565,6 +578,15 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                                 />
                             </label>
                             <label className="block text-sm text-foreground">
+                                Celular del negocio
+                                <input
+                                    type="tel"
+                                    value={businessData.phone}
+                                    onChange={handleBusinessChange("phone")}
+                                    className="mt-2 w-full rounded-2xl border border-border bg-background px-3 py-2 text-sm text-foreground"
+                                />
+                            </label>
+                            <label className="block text-sm text-foreground">
                                 Categoría
                                 <select
                                     value={businessData.category}
@@ -612,28 +634,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                 </div>
             )}
 
-            {showSellerDashboard && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-                    <div className="w-full max-w-6xl rounded-3xl border border-border bg-card p-6 shadow-xl overflow-auto max-h-[90vh]">
-                        <div className="flex items-center justify-between mb-5">
-                            <div>
-                                <h3 className="text-lg font-bold text-foreground">Mi negocio</h3>
-                                <p className="text-xs text-muted-foreground">Panel de control del vendedor</p>
-                            </div>
-                            <button
-                                type="button"
-                                className="text-sm text-primary hover:underline"
-                                onClick={() => setShowSellerDashboard(false)}
-                            >
-                                Cerrar
-                            </button>
-                        </div>
-                        <SellerDashboard
-                            uid={user?.uid || ""}
-                        />
-                    </div>
-                </div>
-            )}
+     
         </div>
     );
 }

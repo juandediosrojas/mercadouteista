@@ -42,11 +42,59 @@ export async function getOrdersBySeller(sellerId: string): Promise<Order[]> {
   return orders;
 }
 
-export async function getOrdersByUser(userId: string): Promise<Order[]> {
-  const q = query(ordersCollection, where('userId', '==', userId));
+async function getSellerById(sellerId: string) {
+  const sellerRef = doc(db, 'sellers', sellerId);
+  const sellerSnap = await getDoc(sellerRef);
+  if (!sellerSnap.exists()) return null;
+  return sellerSnap.data();
+}
+
+function getDateDifference(createdAt: any): string | null {
+  if (!createdAt) return null;
+  const date = typeof createdAt.toDate === 'function' ? createdAt.toDate() : new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return null;
+  const diffMs = new Date().getTime() - date.getTime();
+  if (diffMs < 0) return null;
+
+  const totalMinutes = Math.floor(diffMs / (1000 * 60));
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} día${days === 1 ? '' : 's'}`);
+  if (hours > 0) parts.push(`${hours} hora${hours === 1 ? '' : 's'}`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes} minuto${minutes === 1 ? '' : 's'}`);
+
+  return parts.join(' ');
+}
+
+export async function getOrdersByUser(userId: string): Promise<any[]> {
+  const q = query(ordersCollection, where('buyerId', '==', userId));
   const snap = await getDocs(q);
-  const orders: Order[] = [];
-  snap.forEach((docSnap) => orders.push({ id: docSnap.id, ...(docSnap.data() as any) }));
+  const orders: any[] = [];
+  for (const docSnap of snap.docs) {
+    const data = docSnap.data() as any;
+    const seller = data.sellerId ? await getSellerById(data.sellerId) : null;
+    // const items = Array.isArray(data.items)
+    //   ? data.items.map((item: any) => ({
+    //       name: item.name,
+    //       image: item.image,
+    //     }))
+    //   : [];
+    const dateDiff = getDateDifference(data.createdAt);
+
+    orders.push({
+      id: docSnap.id,
+      humanId: data.humanId,
+      items: data.items,
+      seller: seller!.name,
+      sellerPhone: seller!.phone,
+      status: data.status,
+      date: dateDiff,
+      price: data.total,
+    });
+  }
   return orders;
 }
 

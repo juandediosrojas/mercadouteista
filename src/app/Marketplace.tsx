@@ -5,6 +5,7 @@ import {
   Home, Compass, ClipboardList, User, Store, Heart,
   Package, Trash2, CheckCircle2, Clock, MapPin, ChevronRight,
   Tag,
+  ChevronDown,
 } from "lucide-react";
 import { useAuth } from "./contexts/AuthContext";
 import ProfileView from "./views/ProfileView";
@@ -14,53 +15,8 @@ import { getCartlist, addCartlist, removeCartlist, createOrder } from "../fireba
 import { getUser, notifications as getNotifications, notificationsSeller as getNotificationsSeller } from "../firebase/userService";
 import type { Product, CartItem, AppView, Category, Seller } from "./types";
 import { getSellerByOwner } from "../firebase/sellerService";
+import { getOrdersByUser } from "../firebase/orderService";
 
-
-// ─── Data ─────────────────────────────────────────────────────────────────────
-
-
-const ORDERS_DATA = [
-  {
-    id: "#2024-0847",
-    product: "Almuerzo Ejecutivo",
-    seller: "Cocina de Doña Carmen",
-    status: "ready",
-    statusLabel: "Listo para recoger",
-    date: "Hoy, 12:35 pm",
-    price: 8500,
-    image: "https://images.unsplash.com/photo-1547592180-85f173990554?w=120&h=120&fit=crop&auto=format",
-  },
-  {
-    id: "#2024-0791",
-    product: "Impresión A4 Color ×5",
-    seller: "Copias Exprés",
-    status: "delivered",
-    statusLabel: "Entregado",
-    date: "Ayer, 3:15 pm",
-    price: 4000,
-    image: "https://images.unsplash.com/photo-1588702547919-26089e690ecc?w=120&h=120&fit=crop&auto=format",
-  },
-  {
-    id: "#2024-0755",
-    product: "Pulsera Macramé",
-    seller: "Artesanías Luna",
-    status: "delivered",
-    statusLabel: "Entregado",
-    date: "Hace 3 días",
-    price: 12000,
-    image: "https://images.unsplash.com/photo-1611652022419-a9419f74343d?w=120&h=120&fit=crop&auto=format",
-  },
-  {
-    id: "#2024-0720",
-    product: "Tutoría Cálculo I",
-    seller: "Tutores Pro",
-    status: "delivered",
-    statusLabel: "Entregado",
-    date: "Hace 5 días",
-    price: 20000,
-    image: "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=120&h=120&fit=crop&auto=format",
-  },
-];
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -108,7 +64,10 @@ export default function Marketplace() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [openRegisterBusinessForm, setOpenRegisterBusinessForm] = useState(false);
   const [placingOrder, setPlacingOrder] = useState(false);
+  const [orders, setOrders] = useState<any[]>([]);
 
+
+  //user
   useEffect(() => {
 
     if (!user) {
@@ -118,6 +77,29 @@ export default function Marketplace() {
     const uid = user.uid;
 
     async function loadInfoUser() {
+
+      const pedidos = await getOrdersByUser(uid);
+
+      console.log("pedidos: \n", pedidos);
+
+
+      const ordersData = pedidos.map((pedido: any) => ({
+        id: pedido.humanId,
+        product: pedido.items?.length > 0
+          ? `${pedido.items[0].name}${pedido.items.length > 1 ? ` +${pedido.items.length - 1}` : ""}`
+          : "Sin producto",
+        seller: pedido.seller || "Vendedor desconocido",
+        sellerPhone: pedido.sellerPhone || "N/A",
+        status: pedido.status || "PENDING",
+        statusLabel: getStatusLabel(pedido.status),
+        date: pedido.date || "Fecha no disponible",
+        price: pedido.price || 0,
+        image: pedido.items?.[0]?.image ?? "",
+        itemCount: pedido.items?.length || 0,
+        allItems: pedido.items || [],
+      }));
+
+      setOrders(ordersData);
 
       const userData = await getUser(uid);
 
@@ -146,7 +128,7 @@ export default function Marketplace() {
 
   }, [user]);
 
-
+  // wishlist
   useEffect(() => {
 
     if (!user) return;
@@ -164,6 +146,7 @@ export default function Marketplace() {
 
   }, [user]);
 
+  // Notifications
   useEffect(() => {
 
     if (!user) {
@@ -191,6 +174,7 @@ export default function Marketplace() {
 
   }, [user, sellerData]);
 
+  // Cart
   useEffect(() => {
 
     if (!user) {
@@ -232,6 +216,7 @@ export default function Marketplace() {
 
   }, [user, view, products]);
 
+  // Products
   useEffect(() => {
 
     async function loadData() {
@@ -265,6 +250,7 @@ export default function Marketplace() {
 
   }, []);
 
+  // Products Category
   useEffect(() => {
 
     async function reloadProducts() {
@@ -785,14 +771,14 @@ export default function Marketplace() {
         {view === "orders" && (
           <div className="pt-6">
             <h2 className="font-display text-2xl font-bold text-foreground mb-2">Mis Pedidos</h2>
-            <p className="text-sm text-muted-foreground mb-6">{ORDERS_DATA.length} pedidos en total</p>
+            <p className="text-sm text-muted-foreground mb-6">{orders.length} pedidos en total</p>
 
             {/* Active orders */}
-            {ORDERS_DATA.filter((o) => o.status === "ready").length > 0 && (
+            {orders.filter((o) => o.status === "ready").length > 0 && (
               <div className="mb-6">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Activos</p>
                 <div className="flex flex-col gap-2">
-                  {ORDERS_DATA.filter((o) => o.status === "ready").map((order) => (
+                  {orders.filter((o) => o.status === "ready").map((order) => (
                     <OrderCard key={order.id} order={order} />
                   ))}
                 </div>
@@ -803,7 +789,7 @@ export default function Marketplace() {
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Historial</p>
               <div className="flex flex-col gap-2">
-                {ORDERS_DATA.filter((o) => o.status !== "ready").map((order) => (
+                {orders.filter((o) => o.status !== "ready").map((order) => (
                   <OrderCard key={order.id} order={order} />
                 ))}
               </div>
@@ -867,7 +853,7 @@ export default function Marketplace() {
           </button>
         ))}
       </div>
-      
+
       <AnimatePresence>
         {notificationsOpen && (
           <>
@@ -899,7 +885,7 @@ export default function Marketplace() {
                 </button>
               </div>
 
-                      <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto">
                 {loadingNotifications ? (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
                     Cargando notificaciones...
@@ -1173,32 +1159,155 @@ export default function Marketplace() {
 
 // ─── Order Card ───────────────────────────────────────────────────────────────
 
-function OrderCard({ order }: { order: typeof ORDERS_DATA[number] }) {
+interface OrderItem {
+  name?: string;
+  image?: string;
+  quantity?: number;
+  price?: number;
+}
+
+interface OrderData {
+  id: string;
+  product: string;
+  seller: string;
+  sellerPhone: string;
+  status: "READY" | "DELIVERED" | "PENDING" | "ACCEPTED" | "PREPARING" | "CANCELLED";
+  statusLabel: string;
+  date: string;
+  price: number;
+  image: string;
+  itemCount: number;
+  allItems: OrderItem[];
+}
+
+function OrderCard({ order }: { order: OrderData }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMultipleItems = order.itemCount > 1;
+
+  // Validaciones
+  if (!order?.id || !order?.product) {
+    return null; // Evita renderizar órdenes inválidas
+  }
+
+  const handleToggleExpand = () => {
+    if (hasMultipleItems) {
+      setExpanded(!expanded);
+    }
+  };
+
   return (
-    <div className="flex items-center gap-3 bg-card border border-border rounded-2xl p-4">
-      <div className="w-14 h-14 rounded-xl overflow-hidden bg-muted shrink-0">
-        <img src={order.image} alt={order.product} className="w-full h-full object-cover" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-[10px] text-muted-foreground font-mono">{order.id}</p>
-        <p className="text-sm font-semibold text-foreground truncate">{order.product}</p>
-        <p className="text-xs text-muted-foreground truncate">{order.seller}</p>
-        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-          <span
-            className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${order.status === "ready"
-              ? "bg-amber-100 text-amber-700"
-              : "bg-green-100 text-green-700"
-              }`}
-          >
-            {order.status === "ready" ? <Clock size={9} /> : <CheckCircle2 size={9} />}
-            {order.statusLabel}
-          </span>
-          <span className="text-[10px] text-muted-foreground">{order.date}</span>
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      {/* Header principal */}
+      <div
+        className={`flex items-center gap-3 p-4 ${hasMultipleItems ? "cursor-pointer hover:bg-muted/50" : ""} transition-colors`}
+        onClick={handleToggleExpand}
+      >
+        {/* Imagen */}
+        <div className="w-14 h-14 rounded-xl overflow-hidden bg-muted shrink-0">
+          {order.image ? (
+            <img src={order.image} alt={order.product} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+              <Package size={20} />
+            </div>
+          )}
+        </div>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-muted-foreground font-mono">{order.id || "ID no disponible"}</p>
+          <p className="text-sm font-semibold text-foreground truncate">{order.product}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {order.seller}
+            {order.sellerPhone && order.sellerPhone !== "N/A" && ` - ${order.sellerPhone}`}
+          </p>
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <span
+              className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${order.status === "READY"
+                  ? "bg-amber-100 text-amber-700"
+                  : "bg-green-100 text-green-700"
+                }`}
+            >
+              {order.status === "READY" ? <Clock size={9} /> : <CheckCircle2 size={9} />}
+              {order.statusLabel || "Estado desconocido"}
+            </span>
+            <span className="text-[10px] text-muted-foreground">{order.date}</span>
+            {hasMultipleItems && (
+              <span className="text-[10px] font-medium text-primary bg-primary/10 px-2 py-0.5 rounded">
+                +{order.itemCount - 1} más
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Precio y chevron */}
+        <div className="flex items-center gap-2 shrink-0">
+          <p className="text-sm font-bold text-foreground pl-2">
+            {fmt(order.price)}
+          </p>
+          {hasMultipleItems && (
+            <ChevronDown
+              size={16}
+              className={`text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          )}
         </div>
       </div>
-      <p className="text-sm font-bold text-foreground shrink-0 pl-2">
-        {new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(order.price)}
-      </p>
+
+      {/* Items expandidos */}
+      {expanded && hasMultipleItems && (
+        <div className="border-t border-border bg-muted/30">
+          <div className="p-3 space-y-2">
+            {order.allItems && order.allItems.length > 0 ? (
+              order.allItems.map((item, index) => (
+                <div key={index} className="flex items-center gap-2 p-2 bg-card rounded-lg">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-muted shrink-0">
+                    {item.image ? (
+                      <img src={item.image} alt={item.name || "Producto"} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                        <Package size={14} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{item.name || "Producto sin nombre"}</p>
+                    {item.quantity && item.quantity > 1 && (
+                      <p className="text-[10px] text-muted-foreground">Cantidad: {item.quantity}</p>
+                    )}
+                  </div>
+                  {item.price && item.price > 0 && (
+                    <p className="text-xs font-semibold text-foreground shrink-0">
+                      {fmt(item.price * (item.quantity || 1))}
+                    </p>
+                  )}
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-2">No hay items disponibles</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+const getStatusLabel = (status: string) => {
+  switch (status) {
+    case "PENDING":
+      return "Pendiente";
+    case "ACCEPTED":
+      return "Aceptado";
+    case "PREPARING":
+      return "Preparando";
+    case "READY":
+      return "Listo para recoger";
+    case "DELIVERED":
+      return "Entregado";
+    case "CANCELLED":
+      return "Cancelado";
+    default:
+      return status;
+  }
+};
+

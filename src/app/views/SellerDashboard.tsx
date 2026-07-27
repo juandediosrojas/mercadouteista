@@ -34,6 +34,7 @@ interface ProductForm {
 
 interface SellerDashboardProps {
   uid: string;
+  onBack: () => void;
 }
 
 const formatCurrency = (value: number) => {
@@ -51,7 +52,7 @@ const EMPTY_FORM: ProductForm = {
   image: "",
 };
 
-const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid }) => {
+const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
   const [currentView, setCurrentView] = useState<ViewType>("dashboard");
   const [seller, setSeller] = useState<Seller>({} as Seller);
   const [userData, setUserData] = useState<User>({} as User);
@@ -827,6 +828,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid }) => {
         <p>Cargando datos...</p>
       </div>
     ) : (
+
       <div style={{ padding: 24, fontFamily: "Arial, sans-serif", color: "#1f2937" }}>
         <header style={{ marginBottom: 24 }}>
           <p style={{ color: "#6b7280", marginBottom: 4 }}>Panel del vendedor</p>
@@ -835,6 +837,12 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid }) => {
             Bienvenido, {userData.displayName}. Aquí puedes revisar el rendimiento de tu tienda y la información
             que llega desde el perfil.
           </p>
+          <button
+            onClick={onBack}
+            className="px-3 py-2 rounded-xl bg-secondary hover:bg-muted transition"
+          >
+            ← Volver
+          </button>
         </header>
 
         <section style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginBottom: 24 }}>
