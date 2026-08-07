@@ -1162,7 +1162,7 @@ export default function Marketplace() {
 interface OrderItem {
   name?: string;
   image?: string;
-  quantity?: number;
+  qty?: number;
   price?: number;
 }
 
@@ -1272,13 +1272,13 @@ function OrderCard({ order }: { order: OrderData }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{item.name || "Producto sin nombre"}</p>
-                    {item.quantity && item.quantity > 1 && (
-                      <p className="text-[10px] text-muted-foreground">Cantidad: {item.quantity}</p>
+                    {item.qty && item.qty > 1 && (
+                      <p className="text-[10px] text-muted-foreground">Cantidad: {item.qty}</p>
                     )}
                   </div>
                   {item.price && item.price > 0 && (
                     <p className="text-xs font-semibold text-foreground shrink-0">
-                      {fmt(item.price * (item.quantity || 1))}
+                      {fmt(item.price * (item.qty || 1))}
                     </p>
                   )}
                 </div>
