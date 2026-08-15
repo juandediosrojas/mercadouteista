@@ -61,7 +61,7 @@ export async function updateUserProfile(uid: string, displayName: string, photoU
 
 }
 
-export async function notifications(uid: string){
+export async function notifications(uid: string) {
     const ref = collection(db, "users", uid, "notifications");
     // ordenar por fecha de creación (campo createdAt) descendente
     const q = query(ref, orderBy("createdAt", "desc"));
@@ -70,12 +70,12 @@ export async function notifications(uid: string){
 
     const items: any[] = [];
 
-    snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+    snap.forEach(doc => items.push({ idusr: uid, id: doc.id, ...doc.data() }));
 
     return items;
 }
 
-export async function notificationsSeller(uid: string){
+export async function notificationsSeller(uid: string) {
     const ref = collection(db, "sellers", uid, "notifications");
     // ordenar por fecha de creación (campo createdAt) descendente
     const q = query(ref, orderBy("createdAt", "desc"));
@@ -84,7 +84,40 @@ export async function notificationsSeller(uid: string){
 
     const items: any[] = [];
 
-    snap.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+    snap.forEach(doc => items.push({ idusr: uid, id: doc.id, ...doc.data() }));
 
     return items;
+}
+
+export async function markNotificationAsRead(
+    uid: string,
+    notificationId: string,
+    notificationType: "buyer" | "seller",
+    sellerData?: any
+) {
+    try {
+        if (notificationType === "seller") {
+            // Actualizar en la colección del vendedor
+            const sellerId = sellerData?.id ?? (typeof sellerData === "string" ? sellerData : undefined);
+            if (!sellerId) {
+                throw new Error("Seller ID not found");
+            }
+
+            const ref = doc(db, "sellers", sellerId, "notifications", notificationId);
+            await updateDoc(ref, {
+                read: true,
+                updatedAt: new Date()
+            });
+        } else {
+            // Actualizar en la colección del comprador (usuario)
+            const ref = doc(db, "users", uid, "notifications", notificationId);
+            await updateDoc(ref, {
+                read: true,
+                updatedAt: new Date()
+            });
+        }
+    } catch (err) {
+        console.error("Error updating notification:", err);
+        throw err;
+    }
 }

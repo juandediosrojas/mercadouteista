@@ -4,7 +4,7 @@ import {
   ShoppingCart, Search, Bell, Star, Plus, Minus, X,
   Home, Compass, ClipboardList, User, Store, Heart,
   Package, Trash2, CheckCircle2, Clock, MapPin, ChevronRight,
-  Tag,
+  Tag, CircleDot, Phone,
   ChevronDown,
 } from "lucide-react";
 import { useAuth } from "./contexts/AuthContext";
@@ -12,7 +12,7 @@ import ProfileView from "./views/ProfileView";
 import { getProductsPage, getCategories, getSellers } from "../firebase/productService";
 import { getWishlist, addWishlist, removeWishlist } from "../firebase/wishlistService";
 import { getCartlist, addCartlist, removeCartlist, createOrder } from "../firebase/cartService";
-import { getUser, notifications as getNotifications, notificationsSeller as getNotificationsSeller } from "../firebase/userService";
+import { getUser, notifications as getNotifications, notificationsSeller as getNotificationsSeller, markNotificationAsRead } from "../firebase/userService";
 import type { Product, CartItem, AppView, Category, Seller } from "./types";
 import { getSellerByOwner } from "../firebase/sellerService";
 import { getOrdersByUser } from "../firebase/orderService";
@@ -65,6 +65,90 @@ export default function Marketplace() {
   const [openRegisterBusinessForm, setOpenRegisterBusinessForm] = useState(false);
   const [placingOrder, setPlacingOrder] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<"seller" | "buyer" | "all">("all");
+
+  // Agrupar notificaciones por rol
+  const groupedNotifications = {
+    seller: notifications.filter(n => n.for === "seller"),
+    buyer: notifications.filter(n => n.for === "buyer")
+  };
+
+  // Función para convertir timestamp de Firestore
+  const convertTimestamp = (createdAt: any) => {
+    if (!createdAt) return "";
+
+    if (createdAt.toDate) {
+      return createdAt.toDate().toLocaleString("es-CO");
+    }
+
+    if (createdAt.seconds) {
+      return new Date(createdAt.seconds * 1000).toLocaleString("es-CO");
+    }
+
+    if (typeof createdAt === "string") {
+      return createdAt;
+    }
+
+    return "";
+  };
+
+  const handleNotificationClick = async (notificationId: string) => {
+    try {
+      if (!user) return;
+
+      // Encontrar la notificación para obtener su tipo
+      const notification = notifications.find(n => n.id === notificationId);
+      if (!notification) return;
+
+      const notificationType = notification.for; // "buyer" o "seller"
+
+      if (notification.read) {
+        // Si ya está leída, no hacemos nada
+        return;
+      }
+
+      // Pasar el tipo a la función de actualización
+      await markNotificationAsRead(user.uid, notificationId, notificationType, sellerData);
+
+      // Actualizar en el estado local
+      setNotifications(prev =>
+        prev.map(notif =>
+          notif.id === notificationId ? { ...notif, read: true } : notif
+        )
+      );
+    } catch (err) {
+      console.error("Error marking notification as read:", err);
+    }
+  };
+
+  // Cambiar estado de una notificación/pedido (UI local)
+  const statuses = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
+  const getStatusClass = (s: string) => {
+    switch (s) {
+      case "PENDING": return "bg-yellow-100 text-yellow-800";
+      case "PROCESSING": return "bg-blue-100 text-blue-800";
+      case "SHIPPED": return "bg-purple-100 text-purple-800";
+      case "DELIVERED": return "bg-green-100 text-green-800";
+      case "CANCELLED": return "bg-red-100 text-red-800";
+      default: return "bg-muted text-foreground";
+    }
+  };
+
+  const changeNotificationStatus = (id: string, status: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, status } : n));
+  };
+
+  // Función helper para obtener icono según tipo
+  const getNotificationIcon = (type: string) => {
+    switch (type) {
+      case "ORDER_CREATED":
+        return <Package size={16} className="text-primary" />;
+      case "ORDER_COMPLETED":
+        return <CheckCircle2 size={16} className="text-green-500" />;
+      default:
+        return <Bell size={16} className="text-muted-foreground" />;
+    }
+  };
 
 
   //user
@@ -148,20 +232,32 @@ export default function Marketplace() {
 
   // Notifications
   useEffect(() => {
-
     if (!user) {
       setNotifications([]);
       return;
     }
 
-    const uid = user.uid;
     setLoadingNotifications(true);
+    const userid = user.uid;
 
     async function loadNotificationsList() {
       try {
         const sellerId = sellerData?.id ?? (typeof sellerData === "string" ? sellerData : undefined);
-        const notifs = sellerId ? await getNotificationsSeller(sellerId) : await getNotifications(uid);
-        setNotifications(notifs);
+        const buyerId = userid;
+
+        const [sellerNotifications, buyerNotifications] = await Promise.all([
+          sellerId ? getNotificationsSeller(sellerId) : Promise.resolve([]),
+          getNotifications(buyerId)
+        ]);
+
+        // Deduplicar por ID usando Map
+        const uniqueNotifications = Array.from(
+          new Map(
+            [...sellerNotifications, ...buyerNotifications].map((notif: any) => [notif.id, notif])
+          ).values()
+        );
+        console.log("Unique notifications:", uniqueNotifications);
+        setNotifications(uniqueNotifications);
       } catch (err) {
         console.error("Error loading notifications:", err);
         setNotifications([]);
@@ -171,7 +267,6 @@ export default function Marketplace() {
     }
 
     loadNotificationsList();
-
   }, [user, sellerData]);
 
   // Cart
@@ -718,7 +813,7 @@ export default function Marketplace() {
             </div>
 
             {/* Featured Sellers */}
-            {activeCategory === "all" && !searchQuery && (
+            {/* {activeCategory === "all" && !searchQuery && (
               <section className="mt-10">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="font-display text-lg font-semibold text-foreground">Vendedores Destacados</h2>
@@ -742,7 +837,7 @@ export default function Marketplace() {
                   ))}
                 </div>
               </section>
-            )}
+            )} */}
 
             {/* Seller CTA */}
             {activeCategory === "all" && !searchQuery && !(user as any)?.seller && (
@@ -831,29 +926,30 @@ export default function Marketplace() {
         </div>
       </nav>
 
-      {/* ───── Desktop Tab Nav (sm+, top right of header area) ───── */}
-      <div className="hidden sm:flex fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-card border border-border rounded-2xl shadow-lg px-2 py-1.5 gap-1">
-        {(
-          [
-            { id: "home" as AppView, icon: Home, label: "Inicio" },
-            { id: "orders" as AppView, icon: ClipboardList, label: "Pedidos" },
-            { id: "profile" as AppView, icon: User, label: "Perfil" },
-          ] as const
-        ).map(({ id, icon: Icon, label }) => (
-          <button
-            key={id}
-            onClick={() => setView(id)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition ${view === id
-              ? "bg-primary text-primary-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-          >
-            <Icon size={15} />
-            {label}
-          </button>
-        ))}
+      {/* ───── Desktop Tab Nav (sm+, below content as footer) ───── */}
+      <div className="hidden sm:flex sticky bottom-0 z-30 mt-8 w-full justify-center px-4 pb-4">
+        <div className="bg-card border border-border rounded-2xl shadow-lg px-2 py-1.5 gap-1 flex items-center">
+          {(
+            [
+              { id: "home" as AppView, icon: Home, label: "Inicio" },
+              { id: "orders" as AppView, icon: ClipboardList, label: "Pedidos" },
+              { id: "profile" as AppView, icon: User, label: "Perfil" },
+            ] as const
+          ).map(({ id, icon: Icon, label }) => (
+            <button
+              key={id}
+              onClick={() => setView(id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition ${view === id
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
-
       <AnimatePresence>
         {notificationsOpen && (
           <>
@@ -872,11 +968,9 @@ export default function Marketplace() {
               transition={{ type: "spring", damping: 28, stiffness: 280 }}
               className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-sm bg-background shadow-2xl flex flex-col"
             >
+              {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-                <h2 className="font-display text-lg font-bold">
-                  Notificaciones
-                </h2>
-
+                <h2 className="font-display text-lg font-bold">Notificaciones</h2>
                 <button
                   onClick={() => setNotificationsOpen(false)}
                   className="p-2 hover:bg-secondary rounded-xl transition"
@@ -885,44 +979,151 @@ export default function Marketplace() {
                 </button>
               </div>
 
+              {/* Tabs */}
+              <div className="flex border-b border-border px-4 gap-0">
+                <button
+                  onClick={() => setActiveTab("seller")}
+                  className={`flex-1 py-3 text-sm font-medium transition relative ${activeTab === "seller"
+                    ? "text-foreground"
+                    : "text-muted-foreground"
+                    }`}
+                >
+                  Vendedor
+                  {groupedNotifications.seller.some(n => !n.read) && (
+                    <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />
+                  )}
+                  {activeTab === "seller" && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                  )}
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("buyer")}
+                  className={`flex-1 py-3 text-sm font-medium transition relative ${activeTab === "buyer"
+                    ? "text-foreground"
+                    : "text-muted-foreground"
+                    }`}
+                >
+                  Cliente
+                  {groupedNotifications.buyer.some(n => !n.read) && (
+                    <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full" />
+                  )}
+                  {activeTab === "buyer" && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                  )}
+                </button>
+              </div>
+
+              {/* Contenido */}
               <div className="flex-1 overflow-y-auto">
                 {loadingNotifications ? (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
                     Cargando notificaciones...
                   </div>
-                ) : notifications.length === 0 ? (
-                  <div className="flex flex-1 flex-col items-center justify-center text-center text-muted-foreground px-6 py-10 gap-3">
-                    <div className="w-16 h-16 bg-secondary rounded-2xl flex items-center justify-center">
-                      <Bell size={26} />
-                    </div>
-                    <p className="font-semibold text-foreground">Aún no tienes notificaciones.</p>
-                    <p className="text-sm">Las nuevas alertas aparecerán aquí.</p>
-                  </div>
                 ) : (
-                  <div className="space-y-3 p-4">
-                    {notifications.map((item) => {
-                      const title = item.title ?? item.message ?? item.subject ?? "Notificación";
-                      const body = item.body ?? item.text ?? "";
-                      const createdAt = item.createdAt?.toDate
-                        ? item.createdAt.toDate().toLocaleString("es-CO")
-                        : typeof item.createdAt === "string"
-                          ? item.createdAt
-                          : item.createdAt
-                            ? new Date(item.createdAt).toLocaleString("es-CO")
-                            : "";
-                      return (
-                        <div key={item.id} className="bg-card border border-border rounded-3xl p-4">
-                          <div className="flex items-start justify-between gap-3 mb-2">
-                            <p className="text-sm font-semibold text-foreground">{title}</p>
-                            {createdAt && (
-                              <span className="text-[10px] text-muted-foreground">{createdAt}</span>
-                            )}
-                          </div>
-                          {body && <p className="text-sm text-muted-foreground leading-relaxed">{body}</p>}
+                  <>
+                    {(activeTab === "seller" ? groupedNotifications.seller : groupedNotifications.buyer)
+                      .length === 0 ? (
+                      <div className="flex flex-1 flex-col items-center justify-center text-center text-muted-foreground px-6 py-10 gap-3">
+                        <div className="w-16 h-16 bg-secondary rounded-2xl flex items-center justify-center">
+                          <Bell size={26} />
                         </div>
-                      );
-                    })}
-                  </div>
+                        <p className="font-semibold text-foreground">
+                          Aún no tienes notificaciones.
+                        </p>
+                        <p className="text-sm">Las nuevas alertas aparecerán aquí.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 p-4">
+                        {(activeTab === "seller"
+                          ? groupedNotifications.seller
+                          : groupedNotifications.buyer
+                        ).map((item) => (
+                          <motion.div
+                            key={item.id}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            onClick={() => handleNotificationClick(item.id)}
+                            className={`rounded-2xl p-4 cursor-pointer transition duration-200 border ${!item.read
+                              ? "bg-primary/8 border-primary/40 hover:bg-primary/12"
+                              : "bg-card border-border hover:bg-secondary/40"
+                              }`}
+                          >
+                            <div className="flex items-start gap-3">
+                              {/* Icono del tipo de notificación */}
+                              <div className="flex-shrink-0 mt-1">
+                                {getNotificationIcon(item.type)}
+                              </div>
+
+                              {/* Contenido principal */}
+                              <div className="flex-1 min-w-0">
+                                {/* Fila 1: Título y indicadores */}
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <div className="flex-1">
+                                    <p className="text-sm font-semibold text-foreground leading-snug">
+                                      {item.humanId}
+                                    </p>
+                                    {/* Badges */}
+                                    <div className="flex items-center gap-2 mt-2">
+                                      {item.type && (
+                                        <span className="text-[11px] px-2 py-1 rounded-full bg-green-500/15 text-green-600 dark:text-green-400 font-medium">
+                                          {item.type.replace(/_/g, " ")}
+                                        </span>
+                                      )}
+                                      {item.status && (
+                                        <span
+                                          className={`text-[10px] px-2 py-1 rounded-full font-medium ${getStatusClass(
+                                            item.status
+                                          )}`}
+                                        >
+                                          {item.status}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Puntito de no leído con animación */}
+                                  {!item.read && (
+                                    <motion.div
+                                      initial={{ scale: 0 }}
+                                      animate={{ scale: 1 }}
+                                      className="flex-shrink-0"
+                                    >
+                                      <motion.div
+                                        animate={{ scale: [1, 1.2, 1] }}
+                                        transition={{ duration: 2, repeat: Infinity }}
+                                        className="w-2.5 h-2.5 bg-red-500 rounded-full shadow-md shadow-red-500/50"
+                                      />
+                                    </motion.div>
+                                  )}
+                                </div>
+
+                                {/* Fila 2: Mensaje */}
+                                {item.message && (
+                                  <p className="text-sm text-muted-foreground leading-relaxed mb-3">
+                                    {item.message}
+                                  </p>
+                                )}
+                                {/* Fila 3: Fecha (más legible) */}
+                                {item.createdAt && (
+                                  <div className="flex items-center justify-between pt-2 border-t border-border/30">
+                                    <span className="text-xs text-muted-foreground">
+                                      {convertTimestamp(item.createdAt)}
+                                    </span>
+                                    {!item.read && (
+                                      <span className="text-[10px] text-primary font-semibold">
+                                        Nuevo
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </motion.div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </motion.div>
@@ -1224,8 +1425,8 @@ function OrderCard({ order }: { order: OrderData }) {
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             <span
               className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${order.status === "READY"
-                  ? "bg-amber-100 text-amber-700"
-                  : "bg-green-100 text-green-700"
+                ? "bg-amber-100 text-amber-700"
+                : "bg-green-100 text-green-700"
                 }`}
             >
               {order.status === "READY" ? <Clock size={9} /> : <CheckCircle2 size={9} />}
