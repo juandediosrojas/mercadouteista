@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { getSellerByOwner } from "../../firebase/sellerService";
 import { getCategories, getProductsBySeller, setProduct, disableProduct, updateProducto } from "../../firebase/productService";
 import { Product, User } from "../types";
 import { getUser } from "../../firebase/userService";
-import { updateImage } from "../../firebase/storageService"; // ← cambiado a updateImage
+import { updateImage } from "../../firebase/storageService";
+import { getOrdersBySeller, statusChange } from "../../firebase/orderService";
 import Swal from "sweetalert2";
-import { connectStorageEmulator } from "firebase/storage";
 
 type ViewType = "dashboard" | "products" | "edit";
 
@@ -37,8 +37,60 @@ interface SellerDashboardProps {
   onBack: () => void;
 }
 
-const formatCurrency = (value: number) => {
-  return `$ ${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔧 UTILIDADES (NUEVO)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Formatea moneda en formato USD */
+const formatCurrency = (value: number): string => {
+  return `$ ${new Intl.NumberFormat('en-US', { 
+    minimumFractionDigits: 2, 
+    maximumFractionDigits: 2 
+  }).format(value)}`;
+};
+
+/** Parsea una fecha de Firestore */
+const parseFirebaseDate = (dateObj: any): Date | null => {
+  if (!dateObj) return null;
+  
+  if (typeof dateObj.toDate === 'function') {
+    return dateObj.toDate();
+  }
+  
+  if (dateObj.seconds !== undefined) {
+    return new Date(
+      dateObj.seconds * 1000 + Math.round((dateObj.nanoseconds || 0) / 1e6)
+    );
+  }
+  
+  if (dateObj instanceof Date) return dateObj;
+  
+  return null;
+};
+
+/** Formatea fecha para mostrar */
+const formatDate = (date: Date | null): string => {
+  if (!date || Number.isNaN(date.getTime())) return "-";
+  
+  return date.toLocaleString("es-PE", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
+
+/** Traduce estado de orden */
+const translateOrderStatus = (status: string): string => {
+  const translations: Record<string, string> = {
+    "PENDING": "Pendiente",
+    "ATTENDING": "Atendiendo",
+    "READY_FOR_PICKUP": "Listo para recoger",
+    "COMPLETED": "Completado",
+    "CANCELLED": "Cancelado"
+  };
+  return translations[status] || status;
 };
 
 const EMPTY_FORM: ProductForm = {
@@ -53,71 +105,78 @@ const EMPTY_FORM: ProductForm = {
 };
 
 const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
+  // ─ Estado principal ─────────────────────────────────────────────────────
   const [currentView, setCurrentView] = useState<ViewType>("dashboard");
   const [seller, setSeller] = useState<Seller>({} as Seller);
   const [userData, setUserData] = useState<User>({} as User);
   const [products, setProducts] = useState<Product[]>([]);
-  const [editingProduct, setEditingProduct] = useState<ProductForm | null>(null);
+  const [orders, setOrders] = useState<any[]>([]);
   const [categories, setCategories] = useState<{ id: string; label: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [formData, setFormData] = useState<ProductForm>(EMPTY_FORM);
 
-  // ── Estado de la subida de imagen ──────────────────────────────────────────
+  // ─ Estado de formulario ─────────────────────────────────────────────────
+  const [formData, setFormData] = useState<ProductForm>(EMPTY_FORM);
+  const [editingProduct, setEditingProduct] = useState<ProductForm | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageProgress, setImageProgress] = useState<number | null>(null);
 
-  useEffect(() => {
-    const loadSellerData = async () => {
-      try {
-        setLoading(true);
-        const sellerData = await getSellerByOwner(uid);
-        console.log("Datos del vendedor obtenidos:", sellerData);
-        setSeller(sellerData as Seller);
+  // ─ Estado de modal ──────────────────────────────────────────────────────
+  const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
-        if (sellerData?.id) {
-          const productsData = await getProductsBySeller(sellerData.id);
-          console.log("Productos obtenidos:", productsData);
-          setProducts((productsData) || []);
-        }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🎯 HANDLERS - Cambio de estado de orden (IMPORTANTE: ACTUALIZA ESTADO LOCAL)
+  // ═══════════════════════════════════════════════════════════════════════════
+  const handleStatusChange = useCallback(async (orderId: string, newStatus: string) => {
+    try {
+      // 1. Actualizar en Firebase
+      await statusChange(orderId, newStatus);
 
-        const fetchedUser = await getUser(uid);
-        console.log("Datos del usuario obtenidos:", fetchedUser);
-        if (fetchedUser) {
-          setUserData(fetchedUser as User);
-        }
+      // 2. ✅ ACTUALIZAR ESTADO LOCAL INMEDIATAMENTE (CLAVE)
+      setOrders(prevOrders =>
+        prevOrders.map(order =>
+          order.id === orderId ? { ...order, status: newStatus } : order
+        )
+      );
 
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error cargando datos");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadSellerData();
-  }, [uid]);
-
-  useEffect(() => {
-    const loadCategories = async () => {
-      try {
-        const categoriesData = await getCategories();
-        setCategories(categoriesData.map((cat) => ({ id: cat.id, label: cat.label })));
-        console.log("Categorías obtenidas:", categoriesData.map((cat) => ({ id: cat.id, label: cat.label })));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error cargando categorías");
-      }
-    };
-
-    loadCategories();
+      Swal.fire({
+        icon: "success",
+        title: "Estado actualizado",
+        toast: true,
+        position: "top-end",
+        showConfirmButton: false,
+        timer: 2000,
+      });
+    } catch (error) {
+      console.error("Error al actualizar:", error);
+      Swal.fire({
+        icon: "error",
+        title: "Error al actualizar el pedido",
+        toast: true,
+        position: "top-end",
+        showConfirmButton: false,
+        timer: 2500,
+      });
+    }
   }, []);
 
-  const handleNewProduct = () => {
+  // ─ Ver items del pedido ─────────────────────────────────────────────────
+  const handleViewItems = useCallback((order: any) => {
+    setSelectedOrder(order);
+    setShowModal(true);
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📦 HANDLERS - Productos
+  // ═══════════════════════════════════════════════════════════════════════════
+  const handleNewProduct = useCallback(() => {
     setFormData(EMPTY_FORM);
     setEditingProduct(null);
     setCurrentView("edit");
-  };
+  }, []);
 
-  const handleEditProduct = (product: Product) => {
+  const handleEditProduct = useCallback((product: Product) => {
     const productForm: ProductForm = {
       id: product.id,
       name: product.name,
@@ -133,9 +192,9 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
     setFormData(productForm);
     setEditingProduct(productForm);
     setCurrentView("edit");
-  };
+  }, []);
 
-  const handleDeleteProduct = (id: string) => {
+  const handleDeleteProduct = useCallback((id: string) => {
     Swal.fire({
       title: "¿Estás seguro de inactivar el producto?",
       text: "¡Esto no permitirá que se muestre en la tienda!",
@@ -145,28 +204,24 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
       cancelButtonColor: "#d33",
       confirmButtonText: "Sí, inactivar",
       cancelButtonText: "Cancelar"
-    }).then(async (result) => { // Agregamos async aquí para poder usar await
+    }).then(async (result) => {
       if (result.isConfirmed) {
         try {
-          // 1. Intentamos actualizar en Firebase primero
           await disableProduct(id);
-
-          // 2. Si Firebase responde bien, en lugar de quitarlo, actualizamos su propiedad 'active' a false
+          
+          // ✅ Actualizar estado local
           setProducts((prevProducts) =>
             prevProducts.map((p) =>
               p.id === id ? { ...p, active: false } : p
             )
           );
 
-          // 3. Mostramos el mensaje de éxito
           Swal.fire({
             title: "¡Inactivado!",
             text: "El producto ha sido inactivado correctamente.",
             icon: "success"
           });
-
         } catch (error) {
-          // Si algo falla en el servidor, la interfaz no se altera y mostramos el error
           console.error("Error al desactivar el producto:", error);
           Swal.fire({
             icon: "error",
@@ -176,10 +231,10 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
         }
       }
     });
-  };
+  }, []);
 
-  const handleSaveProduct = async () => { // Convertimos la función en async
-    // 1. Validación inicial
+  const handleSaveProduct = useCallback(async () => {
+    // Validación
     if (!formData.name.trim() || formData.price <= 0) {
       Swal.fire({
         icon: "error",
@@ -189,7 +244,6 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
       return;
     }
 
-    // Mostramos el loader de SweetAlert inmediatamente antes de iniciar el proceso
     Swal.fire({
       title: 'Guardando Producto...',
       allowOutsideClick: false,
@@ -200,14 +254,11 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
 
     try {
       if (editingProduct) {
-        // Creamos el objeto del producto editado combinando los datos existentes con el formulario
         const updatedProduct: Product = {
           ...editingProduct,
           ...formData,
-          // Nos aseguramos de mapear la categoría por si cambió en el formulario
           category: categories.find((cat) => cat.id === formData.categoryId)?.label || "",
-          // Asegurar que id siempre sea string (no undefined)
-          id: (editingProduct && editingProduct.id) ? editingProduct.id : `prod-${Date.now()}`,
+          id: editingProduct.id || `prod-${Date.now()}`,
           seller: seller.name,
           sellerId: seller.id,
           rating: 0,
@@ -216,17 +267,11 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
           location: seller.location || ""
         };
 
-        console.log("producto a editar", updatedProduct);
-        // 1. Guardar en Firestore usando tu función updateProduct
         await updateProducto(updatedProduct);
-
-        // 2. Actualizar el estado local si la base de datos respondió bien
         setProducts(
           products.map((p) => (p.id === editingProduct.id ? updatedProduct : p))
         );
-
       } else {
-        // Crear estructura para nuevo producto
         const newProduct: Product = {
           id: `prod-${Date.now()}`,
           name: formData.name,
@@ -245,17 +290,11 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
           categoryId: formData.categoryId || "",
         };
 
-        // 1. Guardar nuevo producto en Firestore (aquí usas tu función de Firebase, ej: addProduct o createProduct)
         await setProduct(newProduct);
-
-        // 2. Actualizar el estado local
         setProducts([...products, newProduct]);
       }
 
-      // Si todo sale bien, cerramos el loader, limpiamos estados y volvemos a la lista
       Swal.close();
-
-      // Alerta opcional de éxito (mejora la experiencia de usuario)
       Swal.fire({
         icon: "success",
         title: "¡Guardado!",
@@ -267,21 +306,18 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
       setCurrentView("products");
       setFormData(EMPTY_FORM);
       setEditingProduct(null);
-
     } catch (error) {
-      // Si algo falla en cualquiera de los dos flujos (crear o editar)
-      Swal.close(); // Cerramos el loader primero
-      console.error("Error al guardar el producto en Firestore:", error);
+      Swal.close();
+      console.error("Error al guardar el producto:", error);
       Swal.fire({
         icon: "error",
         title: "Error",
         text: "No se pudo guardar el producto. Por favor, intenta de nuevo."
       });
     }
-  };
+  }, [formData, editingProduct, categories, products, seller]);
 
-  // ── Handler de subida de imagen ────────────────────────────────────────────
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -291,8 +327,8 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
     try {
       const { url } = await updateImage(
         file,
-        formData.image || null, // si hay imagen previa en Storage, la borra primero
-        "products",                  // carpeta en Firebase Storage
+        formData.image || null,
+        "products",
         (p) => setImageProgress(p)
       );
       setFormData((prev) => ({ ...prev, image: url }));
@@ -302,57 +338,151 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
     } finally {
       setImageUploading(false);
       setImageProgress(null);
-      e.target.value = ""; // permite volver a seleccionar el mismo archivo
+      e.target.value = "";
     }
-  };
+  }, [formData.image]);
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // VIEW: edit
-  // ══════════════════════════════════════════════════════════════════════════
-  if (currentView === "edit") {
-    // Detectar si el formulario tiene cambios respecto al original (nuevo o editado)
-    const isFormDirty = editingProduct
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📡 EFFECTS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Cargar datos del vendedor, órdenes y productos
+  useEffect(() => {
+    const loadSellerData = async () => {
+      try {
+        setLoading(true);
+        const sellerData = await getSellerByOwner(uid);
+        setSeller(sellerData as Seller);
+
+        if (sellerData?.id) {
+          const [pedidos, productsData, fetchedUser] = await Promise.all([
+            getOrdersBySeller(sellerData.id),
+            getProductsBySeller(sellerData.id),
+            getUser(uid),
+          ]);
+
+          setOrders(pedidos);
+          setProducts(productsData || []);
+          if (fetchedUser) {
+            setUserData(fetchedUser as User);
+          }
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error cargando datos");
+        console.error("Error cargando datos:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadSellerData();
+  }, [uid]);
+
+  // Cargar categorías
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        const categoriesData = await getCategories();
+        setCategories(categoriesData.map((cat) => ({ id: cat.id, label: cat.label })));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Error cargando categorías");
+      }
+    };
+
+    loadCategories();
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 💾 COMPUTED VALUES (useMemo para optimizar re-renders)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const isFormDirty = useMemo(() => {
+    return editingProduct
       ? JSON.stringify({ ...editingProduct }) !== JSON.stringify({ ...formData })
       : JSON.stringify(EMPTY_FORM) !== JSON.stringify({ ...formData });
-    const isNameValid = formData.name.trim().length > 0;
-    const isPriceValid = formData.price > 0;
-    const canSave = isNameValid && isPriceValid && !imageUploading;
+  }, [editingProduct, formData]);
 
+  const isNameValid = useMemo(() => formData.name.trim().length > 0, [formData.name]);
+  const isPriceValid = useMemo(() => formData.price > 0, [formData.price]);
+  const canSave = useMemo(() => isNameValid && isPriceValid && !imageUploading, [isNameValid, isPriceValid, imageUploading]);
+
+  const activeProductsCount = useMemo(() => products.filter(p => p.active).length, [products]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🎨 RENDER: Edit Product Modal
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (currentView === "edit") {
     return (
-      <div style={{ padding: 24, fontFamily: "Arial, sans-serif", color: "#1f2937" }}>
-        <button
-          onClick={() => {
-            if (isFormDirty) {
-              const confirmed = window.confirm("Tienes cambios sin guardar. ¿Seguro que quieres salir?");
-              if (!confirmed) return;
-            }
-            setCurrentView("products");
-          }}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "8px 16px",
-            marginBottom: 24,
-            background: "#e5e7eb",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontSize: 14,
-          }}
-        >
-          ← Volver
-        </button>
-
+      <div
+        className="seller-edit-modal"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setCurrentView("products");
+        }}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 1000,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          fontFamily: "Arial, sans-serif",
+          color: "#1f2937",
+          background: "rgba(17, 24, 39, 0.35)",
+          backdropFilter: "blur(6px)",
+          WebkitBackdropFilter: "blur(6px)",
+          overflowY: "auto",
+          boxSizing: "border-box",
+        }}
+      >
         <div
+          className="seller-edit-content"
           style={{
+            position: "relative",
             padding: 24,
             borderRadius: 16,
             background: "#ffffff",
             boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
             maxWidth: 600,
+            width: "100%",
+            maxHeight: "calc(100vh - 48px)",
+            overflowY: "auto",
           }}
         >
+          <button
+            type="button"
+            aria-label="Cerrar modal"
+            onClick={() => {
+              if (isFormDirty) {
+                const confirmed = window.confirm("Tienes cambios sin guardar. ¿Seguro que quieres salir?");
+                if (!confirmed) return;
+              }
+              setCurrentView("products");
+            }}
+            style={{
+              position: "absolute",
+              top: 12,
+              right: 12,
+              width: 32,
+              height: 32,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              background: "transparent",
+              border: "none",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontSize: 24,
+              lineHeight: 1,
+              color: "#6b7280",
+            }}
+          >
+            ×
+          </button>
+
           <h1 style={{ marginTop: 0, marginBottom: 4 }}>
             {editingProduct ? "Editar producto" : "Nuevo producto"}
           </h1>
@@ -360,7 +490,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
             Los campos marcados con * son obligatorios
           </p>
 
-          {/* ── Imagen: drag & drop + preview con botón de quitar ─────────── */}
+          {/* IMAGEN */}
           <div style={{ marginBottom: 20 }}>
             <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "#374151" }}>
               Imagen
@@ -478,8 +608,8 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
               />
             </label>
           </div>
-          {/* ── Fin campo imagen ────────────────────────────────────────── */}
 
+          {/* NOMBRE */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "#374151" }}>
               Nombre *
@@ -501,8 +631,8 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
             />
           </div>
 
-          {/* Precio y Stock en la misma fila */}
-          <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+          {/* PRECIO Y STOCK */}
+          <div className="seller-form-row" style={{ display: "flex", gap: 12, marginBottom: 16 }}>
             <div style={{ flex: 1 }}>
               <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "#374151" }}>
                 Precio *
@@ -552,6 +682,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
             </div>
           </div>
 
+          {/* CATEGORÍA */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "#374151" }}>
               Categoría
@@ -578,6 +709,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
             </select>
           </div>
 
+          {/* ESTADO */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "#374151" }}>
               Estado
@@ -587,7 +719,6 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
                 { value: true, label: "Activo", color: "#059669" },
                 { value: false, label: "Inactivo", color: "#6b7280" },
               ].map((opt) => {
-                // Validamos si esta opción coincide con el booleano en formData.active
                 const isSelected = formData.active === opt.value;
 
                 return (
@@ -605,7 +736,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
                       fontSize: 13,
                       fontWeight: 600,
                       cursor: "pointer",
-                      transition: "all 0.2s ease", // Pequeño extra para que el cambio de color se vea fluido
+                      transition: "all 0.2s ease",
                     }}
                   >
                     {opt.label}
@@ -615,6 +746,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
             </div>
           </div>
 
+          {/* DESCRIPCIÓN */}
           <div style={{ marginBottom: 8 }}>
             <label style={{ display: "block", marginBottom: 6, fontSize: 13, fontWeight: 600, color: "#374151" }}>
               Descripción
@@ -641,8 +773,8 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
             </div>
           </div>
 
-          {/* Footer de acciones */}
-          <div style={{ display: "flex", gap: 12, marginTop: 16, paddingTop: 16, borderTop: "1px solid #f3f4f6" }}>
+          {/* ACCIONES */}
+          <div className="seller-edit-footer" style={{ display: "flex", gap: 12, marginTop: 16, paddingTop: 16, borderTop: "1px solid #f3f4f6" }}>
             <button
               onClick={handleSaveProduct}
               disabled={!canSave}
@@ -679,163 +811,22 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // VIEW: products
-  // ══════════════════════════════════════════════════════════════════════════
-  if (currentView === "products") {
-    return (
-      <div style={{ padding: 24, fontFamily: "Arial, sans-serif", color: "#1f2937" }}>
-        <button
-          onClick={() => setCurrentView("dashboard")}
-          style={{
-            padding: "8px 16px",
-            marginBottom: 24,
-            background: "#e5e7eb",
-            border: "none",
-            borderRadius: 8,
-            cursor: "pointer",
-            fontSize: 14,
-          }}
-        >
-          ← Volver al panel
-        </button>
-
-        <div
-          style={{
-            padding: 20,
-            borderRadius: 16,
-            background: "#ffffff",
-            boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-            <h1 style={{ margin: 0 }}>Gestionar productos</h1>
-            <button
-              onClick={handleNewProduct}
-              style={{
-                padding: "10px 20px",
-                background: "#059669",
-                color: "white",
-                border: "none",
-                borderRadius: 8,
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: 600,
-              }}
-            >
-              + Nuevo producto
-            </button>
-          </div>
-
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
-              <thead>
-                <tr style={{ textAlign: "left", color: "#6b7280", borderBottom: "2px solid #e5e7eb" }}>
-                  <th style={{ padding: "12px 10px" }}>Imagen</th>
-                  <th style={{ padding: "12px 10px" }}>Nombre</th>
-                  <th style={{ padding: "12px 10px" }}>Precio</th>
-                  <th style={{ padding: "12px 10px" }}>Stock</th>
-                  <th style={{ padding: "12px 10px" }}>Estado</th>
-                  <th style={{ padding: "12px 10px" }}>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id} style={{ borderTop: "1px solid #e5e7eb" }}>
-                    <td style={{ padding: "12px 10px" }}>
-                      {product.image ? (
-                        <img
-                          src={product.image}
-                          alt={product.name}
-                          style={{ width: 50, height: 50, objectFit: "cover", borderRadius: 6 }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            width: 50,
-                            height: 50,
-                            borderRadius: 6,
-                            background: "#f3f4f6",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 18,
-                          }}
-                        >
-                          📦
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: "12px 10px" }}>{product.name}</td>
-                    <td style={{ padding: "12px 10px" }}>{formatCurrency(product.price)}</td>
-                    <td style={{ padding: "12px 10px" }}>{(product as any).stock ?? 2}</td>
-                    <td style={{ padding: "12px 10px", color: product.active === true ? "#047857" : "#dc2626" }}>
-                      {product.active === true ? "Activo" : "Inactivo"}
-                    </td>
-                    <td style={{ padding: "12px 10px", display: "flex", gap: 8 }}>
-                      <button
-                        onClick={() => handleEditProduct(product)}
-                        style={{
-                          padding: "6px 12px",
-                          background: "#3b82f6",
-                          color: "white",
-                          border: "none",
-                          borderRadius: 6,
-                          cursor: "pointer",
-                          fontSize: 12,
-                        }}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        disabled={!product.active}
-                        onClick={() => handleDeleteProduct(product.id)}
-                        style={{
-                          padding: "6px 12px",
-                          background: product.active ? "#dc2626" : "#9ca3af",
-                          cursor: product.active ? "pointer" : "not-allowed",
-                          color: "white",
-                          border: "none",
-                          borderRadius: 6,
-                          fontSize: 12,
-                        }}
-                      >
-                        Inactivar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {products.length === 0 && (
-            <p style={{ textAlign: "center", color: "#6b7280", paddingTop: 20 }}>
-              No hay productos. Crea uno para comenzar.
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // VIEW: dashboard
-  // ══════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🎨 RENDER: Dashboard Principal
+  // ═══════════════════════════════════════════════════════════════════════════
   return (
     loading ? (
-      <div style={{ padding: 24, fontFamily: "Arial, sans-serif", color: "#1f2937" }}>
+      <div className="seller-dashboard-page" style={{ padding: 24, fontFamily: "Arial, sans-serif", color: "#1f2937" }}>
         <p>Cargando datos...</p>
       </div>
     ) : (
-
       <div style={{ padding: 24, fontFamily: "Arial, sans-serif", color: "#1f2937" }}>
+        {/* HEADER */}
         <header style={{ marginBottom: 24 }}>
           <p style={{ color: "#6b7280", marginBottom: 4 }}>Panel del vendedor</p>
           <h1 style={{ fontSize: 28, margin: 0 }}>{seller.name}</h1>
           <p style={{ color: "#4b5563", marginTop: 8 }}>
-            Bienvenido, {userData.displayName}. Aquí puedes revisar el rendimiento de tu tienda y la información
-            que llega desde el perfil.
+            Bienvenido, {userData.displayName}. Aquí puedes revisar el rendimiento de tu tienda y la información que llega desde el perfil.
           </p>
           <button
             onClick={onBack}
@@ -845,26 +836,20 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
           </button>
         </header>
 
+        {/* STATS */}
         <section style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginBottom: 24 }}>
           <div style={{ padding: 18, borderRadius: 12, background: "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-            <p style={{ margin: 0, color: "#6b7280" }}>Vistas al perfil</p>
-            <h2 style={{ margin: "12px 0 0", fontSize: 24 }}>2</h2>
-          </div>
-          <div style={{ padding: 18, borderRadius: 12, background: "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
-            <p style={{ margin: 0, color: "#6b7280" }}>Ventas totales</p>
-            <h2 style={{ margin: "12px 0 0", fontSize: 24 }}>200</h2>
-          </div>
-          <div style={{ padding: 18, borderRadius: 12, background: "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
             <p style={{ margin: 0, color: "#6b7280" }}>Pedidos</p>
-            <h2 style={{ margin: "12px 0 0", fontSize: 24 }}>20</h2>
+            <h2 style={{ margin: "12px 0 0", fontSize: 24 }}>{orders.length}</h2>
           </div>
           <div style={{ padding: 18, borderRadius: 12, background: "#ffffff", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}>
             <p style={{ margin: 0, color: "#6b7280" }}>Productos activos</p>
-            <h2 style={{ margin: "12px 0 0", fontSize: 24 }}>10</h2>
+            <h2 style={{ margin: "12px 0 0", fontSize: 24 }}>{activeProductsCount}</h2>
           </div>
         </section>
 
-        <section style={{ display: "grid", gap: 24, gridTemplateColumns: "2fr 1fr", marginBottom: 24 }}>
+        {/* PERFIL */}
+        <section style={{ display: "grid", gap: 24, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", marginBottom: 24 }}>
           <div style={{ padding: 20, borderRadius: 16, background: "#ffffff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
             <h2 style={{ marginTop: 0, marginBottom: 12 }}>Perfil</h2>
             <dl style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
@@ -891,49 +876,224 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
               <div>
                 <dt style={{ color: "#6b7280" }}>Miembro desde</dt>
                 <dd style={{ margin: 4 }}>
-                  {typeof seller.createdAt === "object" && seller.createdAt !== null
-                    ? (seller.createdAt as any).toDate
-                      ? (seller.createdAt as any).toDate().toLocaleDateString("es-PE", { day: "2-digit", month: "long", year: "numeric" })
-                      : ((seller.createdAt as any).seconds !== undefined
-                        ? new Date((seller.createdAt as any).seconds * 1000 + Math.round(((seller.createdAt as any).nanoseconds || 0) / 1e6)).toLocaleDateString("es-PE", { day: "2-digit", month: "long", year: "numeric" })
-                        : String(seller.createdAt))
-                    : seller.createdAt}
+                  {formatDate(parseFirebaseDate(seller.createdAt))}
                 </dd>
               </div>
             </dl>
           </div>
         </section>
 
-        <div style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button
-            onClick={() => setCurrentView("products")}
-            style={{
-              padding: "10px 18px",
-              background: "#3b82f6",
-              color: "white",
-              border: "none",
-              borderRadius: 8,
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 600,
-            }}
-          >
-            Gestionar productos
-          </button>
-        </div>
-
-        <section style={{ display: "grid", gap: 24, marginBottom: 24 }}>
+        {/* TABLA DE ÓRDENES */}
+        <section
+          style={{
+            display: "grid",
+            gap: 24,
+            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+            marginBottom: 24
+          }}
+        >
           <div style={{ padding: 20, borderRadius: 16, background: "#ffffff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
-            <h2 style={{ marginTop: 0 }}>Productos</h2>
+            <h2 style={{ marginTop: 0 }}>Pedidos recientes</h2>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: "#6b7280" }}>
+                    <th style={{ padding: "12px 10px" }}>Pedido</th>
+                    <th style={{ padding: "12px 10px" }}>Cliente</th>
+                    <th style={{ padding: "12px 10px" }}>Total</th>
+                    <th style={{ padding: "12px 10px" }}>Estado</th>
+                    <th style={{ padding: "12px 10px" }}>Fecha</th>
+                    <th style={{ padding: "12px 10px" }}>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.length > 0 ? (
+                    orders.map((order) => {
+                      const date = parseFirebaseDate(order.createdAt);
+
+                      return (
+                        <tr key={order.id} style={{ borderTop: "1px solid #e5e7eb" }}>
+                          <td style={{ padding: "12px 10px", fontWeight: 600 }}>
+                            {order.humanId || order.id}
+                          </td>
+                          <td style={{ padding: "12px 10px" }}>
+                            {order.buyer?.displayName || order.buyer?.email || "-"}
+                          </td>
+                          <td style={{ padding: "12px 10px" }}>
+                            {formatCurrency(Number(order.total) || 0)}
+                          </td>
+                          <td style={{ padding: "12px 10px" }}>
+                            <select
+                              value={order.status}
+                              onChange={(e) => handleStatusChange(order.id, e.target.value)}
+                              style={{
+                                padding: "6px 8px",
+                                borderRadius: 4,
+                                border: "1px solid #d1d5db",
+                                fontSize: 13,
+                                cursor: "pointer",
+                                backgroundColor:
+                                  order.status === "PENDING"
+                                    ? "#fef3c7"
+                                    : order.status === "ATTENDING"
+                                      ? "#dbeafe"
+                                      : "#d1fae5"
+                              }}
+                            >
+                              <option value="PENDING">Pendiente</option>
+                              <option value="ATTENDING">Atendiendo</option>
+                              <option value="READY_FOR_PICKUP">Listo para recoger</option>
+                              <option value="COMPLETED">Completado</option>
+                            </select>
+                          </td>
+                          <td style={{ padding: "12px 10px" }}>
+                            {formatDate(date)}
+                          </td>
+                          <td style={{ padding: "12px 10px" }}>
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button
+                                onClick={() => handleViewItems(order)}
+                                style={{
+                                  padding: "6px 12px",
+                                  borderRadius: 4,
+                                  border: "1px solid #3b82f6",
+                                  color: "#3b82f6",
+                                  background: "#fff",
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 500
+                                }}
+                              >
+                                Ver items
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+
+                  ) : (
+                    <tr>
+                      <td colSpan={6} style={{ padding: "20px 10px", textAlign: "center", color: "#6b7280" }}>
+                        No hay pedidos recientes.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        {/* MODAL DE ITEMS */}
+        {showModal && selectedOrder && (
+          <div style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000
+          }}>
+            <div style={{
+              background: "#fff",
+              padding: 24,
+              borderRadius: 12,
+              maxWidth: 500,
+              maxHeight: "80vh",
+              overflow: "auto"
+            }}>
+              <h3>{selectedOrder.humanId}</h3>
+              <div style={{ marginBottom: 16 }}>
+                {selectedOrder.items.map((item: any, idx: number) => (
+                  <div key={idx} style={{
+                    display: "flex",
+                    gap: 12,
+                    padding: "12px 0",
+                    borderBottom: "1px solid #e5e7eb"
+                  }}>
+                    <img 
+                      src={item.image || ""} 
+                      alt={item.name} 
+                      style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover" }} 
+                    />
+                    <div style={{ flex: 1 }}>
+                      <p style={{ margin: "0 0 4px 0", fontWeight: 600 }}>{item.name}</p>
+                      <p style={{ margin: "0 0 4px 0", fontSize: 13, color: "#6b7280" }}>Cant: {item.qty}</p>
+                      <p style={{ margin: 0, fontWeight: 600 }}>{formatCurrency(item.price * (item.qty || 0))}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowModal(false)}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: "#3b82f6",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontWeight: 500
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* TABLA DE PRODUCTOS */}
+        <section
+          style={{
+            display: "grid",
+            gap: 24,
+            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+            marginBottom: 24
+          }}
+        >
+          <div
+            style={{
+              padding: 20,
+              borderRadius: 16,
+              background: "#ffffff",
+              boxShadow: "0 1px 6px rgba(0,0,0,0.06)",
+            }}
+          >
+            <div className="seller-dashboard-actions" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h1 style={{ margin: 0 }}>Gestionar productos</h1>
+              <button
+                onClick={handleNewProduct}
+                style={{
+                  padding: "10px 20px",
+                  background: "#059669",
+                  color: "white",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 600,
+                }}
+              >
+                + Nuevo producto
+              </button>
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table className="seller-product-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#6b7280", borderBottom: "2px solid #e5e7eb" }}>
                     <th style={{ padding: "12px 10px" }}>Imagen</th>
                     <th style={{ padding: "12px 10px" }}>Nombre</th>
                     <th style={{ padding: "12px 10px" }}>Precio</th>
                     <th style={{ padding: "12px 10px" }}>Stock</th>
                     <th style={{ padding: "12px 10px" }}>Estado</th>
+                    <th style={{ padding: "12px 10px" }}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -965,32 +1125,52 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
                       </td>
                       <td style={{ padding: "12px 10px" }}>{product.name}</td>
                       <td style={{ padding: "12px 10px" }}>{formatCurrency(product.price)}</td>
-                      <td style={{ padding: "12px 10px" }}>{(product as any).stock ?? 2}</td>
+                      <td style={{ padding: "12px 10px" }}>{(product as any).stock ?? 0}</td>
                       <td style={{ padding: "12px 10px", color: product.active === true ? "#047857" : "#dc2626" }}>
                         {product.active === true ? "Activo" : "Inactivo"}
+                      </td>
+                      <td style={{ padding: "12px 10px", display: "flex", gap: 8 }}>
+                        <button
+                          onClick={() => handleEditProduct(product)}
+                          style={{
+                            padding: "6px 12px",
+                            background: "#3b82f6",
+                            color: "white",
+                            border: "none",
+                            borderRadius: 6,
+                            cursor: "pointer",
+                            fontSize: 12,
+                          }}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          disabled={!product.active}
+                          onClick={() => handleDeleteProduct(product.id)}
+                          style={{
+                            padding: "6px 12px",
+                            background: product.active ? "#dc2626" : "#9ca3af",
+                            cursor: product.active ? "pointer" : "not-allowed",
+                            color: "white",
+                            border: "none",
+                            borderRadius: 6,
+                            fontSize: 12,
+                          }}
+                        >
+                          Inactivar
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
 
-          <div style={{ padding: 20, borderRadius: 16, background: "#ffffff", boxShadow: "0 1px 6px rgba(0,0,0,0.06)" }}>
-            <h2 style={{ marginTop: 0 }}>Pedidos recientes</h2>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
-                <thead>
-                  <tr style={{ textAlign: "left", color: "#6b7280" }}>
-                    <th style={{ padding: "12px 10px" }}>Pedido</th>
-                    <th style={{ padding: "12px 10px" }}>Cliente</th>
-                    <th style={{ padding: "12px 10px" }}>Total</th>
-                    <th style={{ padding: "12px 10px" }}>Estado</th>
-                    <th style={{ padding: "12px 10px" }}>Fecha</th>
-                  </tr>
-                </thead>
-              </table>
-            </div>
+            {products.length === 0 && (
+              <p style={{ textAlign: "center", color: "#6b7280", paddingTop: 20 }}>
+                No hay productos. Crea uno para comenzar.
+              </p>
+            )}
           </div>
         </section>
       </div>

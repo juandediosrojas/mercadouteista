@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  ShoppingCart, Search, Bell, Star, Plus, Minus, X,
-  Home, Compass, ClipboardList, User, Store, Heart,
+  ShoppingCart, Search, Bell, Plus, Minus, X,
+  Home, ClipboardList, User, Store, Heart,
   Package, Trash2, CheckCircle2, Clock, MapPin, ChevronRight,
-  Tag, CircleDot, Phone,
-  ChevronDown,
+  Tag, Phone, ChevronDown,
 } from "lucide-react";
 import { useAuth } from "./contexts/AuthContext";
 import ProfileView from "./views/ProfileView";
@@ -17,100 +16,396 @@ import type { Product, CartItem, AppView, Category, Seller } from "./types";
 import { getSellerByOwner } from "../firebase/sellerService";
 import { getOrdersByUser } from "../firebase/orderService";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔧 UTILIDADES
+// ═══════════════════════════════════════════════════════════════════════════
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
-
-const fmt = (price: number) =>
+/** Formatea precio en COP */
+const formatCurrency = (price: number): string =>
   new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
     maximumFractionDigits: 0,
   }).format(price);
 
-function StarsRow({ rating, count }: { rating?: number; count?: number }) {
-  const display = Number.isFinite(rating as number) ? (rating as number).toFixed(1) : "0.0";
+/** Traduce estado de pedido */
+const getStatusLabel = (status: string): string => {
+  const labels: Record<string, string> = {
+    "PENDING": "Pendiente",
+    "ACCEPTED": "Aceptado",
+    "PREPARING": "Preparando",
+    "READY": "Listo para recoger",
+    "DELIVERED": "Entregado",
+    "CANCELLED": "Cancelado",
+  };
+  return labels[status] || status;
+};
+
+/** Convierte timestamp de Firestore a string legible */
+const convertTimestamp = (createdAt: any): string => {
+  if (!createdAt) return "";
+  if (typeof createdAt.toDate === 'function') return createdAt.toDate().toLocaleString("es-CO");
+  if (createdAt.seconds) return new Date(createdAt.seconds * 1000).toLocaleString("es-CO");
+  if (typeof createdAt === "string") return createdAt;
+  return "";
+};
+
+/** Retorna el icono según el tipo de notificación */
+const getNotificationIcon = (type: string) => {
+  switch (type) {
+    case "ORDER_CREATED":
+      return <Package size={16} className="text-primary" />;
+    case "ORDER_COMPLETED":
+      return <CheckCircle2 size={16} className="text-green-500" />;
+    default:
+      return <Bell size={16} className="text-muted-foreground" />;
+  }
+};
+
+/** Retorna clase CSS según estado */
+const getStatusClass = (s: string): string => {
+  switch (s) {
+    case "PENDING": return "bg-yellow-100 text-yellow-800";
+    case "PROCESSING": return "bg-blue-100 text-blue-800";
+    case "SHIPPED": return "bg-purple-100 text-purple-800";
+    case "DELIVERED": return "bg-green-100 text-green-800";
+    case "CANCELLED": return "bg-red-100 text-red-800";
+    default: return "bg-muted text-foreground";
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎨 COMPONENTES REUTILIZABLES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Componente de fila de estrellas */
+function StarsRow() {
   return (
-    <span className="flex items-center gap-1">
-      <Star size={11} className="fill-amber-400 text-amber-400" />
-      <span className="text-xs font-semibold text-foreground">{display}</span>
-      {count !== undefined && (
-        <span className="text-xs text-muted-foreground">({count})</span>
-      )}
+    <span className="text-xs text-muted-foreground">
+      Nuevo
     </span>
   );
 }
 
-// ─── App ──────────────────────────────────────────────────────────────────────
+// ─ Order Card ──────────────────────────────────────────────────────────────
+
+interface OrderItem {
+  name?: string;
+  image?: string;
+  qty?: number;
+  price?: number;
+}
+
+interface OrderData {
+  id: string;
+  product: string;
+  seller: string;
+  sellerPhone: string;
+  status: "READY" | "DELIVERED" | "PENDING" | "ACCEPTED" | "PREPARING" | "CANCELLED";
+  statusLabel: string;
+  date: string;
+  price: number;
+  image: string;
+  itemCount: number;
+  allItems: OrderItem[];
+}
+
+function OrderCard({ order }: { order: OrderData }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMultipleItems = order.itemCount > 1;
+
+  if (!order?.id || !order?.product) return null;
+
+  const handleToggleExpand = useCallback(() => {
+    if (hasMultipleItems) setExpanded(prev => !prev);
+  }, [hasMultipleItems]);
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+      <div
+        className={`flex items-center gap-3 p-4 ${hasMultipleItems ? "cursor-pointer hover:bg-muted/50" : ""} transition-colors`}
+        onClick={handleToggleExpand}
+      >
+        <div className="w-14 h-14 rounded-xl overflow-hidden bg-muted shrink-0">
+          {order.image ? (
+            <img src={order.image} alt={order.product} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+              <Package size={20} />
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-muted-foreground font-mono">{order.id}</p>
+          <p className="text-sm font-semibold text-foreground truncate">{order.product}</p>
+          <p className="text-xs text-muted-foreground truncate">
+            {order.seller}
+            {order.sellerPhone && order.sellerPhone !== "N/A" && ` - ${order.sellerPhone}`}
+          </p>
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <span
+              className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${order.status === "READY"
+                ? "bg-amber-100 text-amber-700"
+                : "bg-green-100 text-green-700"
+                }`}
+            >
+              {order.status === "READY" ? <Clock size={9} /> : <CheckCircle2 size={9} />}
+              {order.statusLabel}
+            </span>
+            <span className="text-[10px] text-muted-foreground">{order.date}</span>
+            {hasMultipleItems && (
+              <span className="text-[10px] font-medium text-primary bg-primary/10 px-2 py-0.5 rounded">
+                +{order.itemCount - 1} más
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <p className="text-sm font-bold text-foreground pl-2">
+            {formatCurrency(order.price)}
+          </p>
+          {hasMultipleItems && (
+            <ChevronDown
+              size={16}
+              className={`text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
+            />
+          )}
+        </div>
+      </div>
+
+      {expanded && hasMultipleItems && (
+        <div className="border-t border-border bg-muted/30">
+          <div className="p-3 space-y-2">
+            {order.allItems?.length > 0 ? (
+              order.allItems.map((item, index) => (
+                <div key={index} className="flex items-center gap-2 p-2 bg-card rounded-lg">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-muted shrink-0">
+                    {item.image ? (
+                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                        <Package size={14} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{item.name || "Producto"}</p>
+                    {item.qty && item.qty > 1 && (
+                      <p className="text-[10px] text-muted-foreground">Cantidad: {item.qty}</p>
+                    )}
+                  </div>
+                  {item.price && item.price > 0 && (
+                    <p className="text-xs font-semibold text-foreground shrink-0">
+                      {formatCurrency(item.price * (item.qty || 1))}
+                    </p>
+                  )}
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-muted-foreground text-center py-2">No hay items</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🛍️ MARKETPLACE APP
+// ═══════════════════════════════════════════════════════════════════════════
 
 export default function Marketplace() {
+  // ─ Estado principal ────────────────────────────────────────────────────
   const [view, setView] = useState<AppView>("home");
   const [activeCategory, setActiveCategory] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<"seller" | "buyer" | "all">("all");
+
+  // ─ Carrito y Órdenes ───────────────────────────────────────────────────
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [wishlist, setWishlist] = useState<string[]>([]);
+  const [orders, setOrders] = useState<OrderData[]>([]);
+  const [placingOrder, setPlacingOrder] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
+
+  // ─ Productos y Categorías ──────────────────────────────────────────────
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [categories, setCategories] = useState<Category[]>([]);
   const [featuredSellers, setFeaturedSellers] = useState<Seller[]>([]);
-  const [sellerData, setSellerData] = useState<any>(null);
-  const { user, loading, logout } = useAuth();
   const [lastDoc, setLastDoc] = useState<any>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [openRegisterBusinessForm, setOpenRegisterBusinessForm] = useState(false);
-  const [placingOrder, setPlacingOrder] = useState(false);
-  const [orders, setOrders] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<"seller" | "buyer" | "all">("all");
 
-  // Agrupar notificaciones por rol
-  const groupedNotifications = {
+  // ─ Notificaciones ──────────────────────────────────────────────────────
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+
+  // ─ Producto Seleccionado ──────────────────────────────────────────────
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  // ─ Usuario ────────────────────────────────────────────────────────────
+  const [wishlist, setWishlist] = useState<string[]>([]);
+  const [sellerData, setSellerData] = useState<any>(null);
+  const [openRegisterBusinessForm, setOpenRegisterBusinessForm] = useState(false);
+  const { user, loading, logout } = useAuth();
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 💾 COMPUTED VALUES (Memoizados)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const cartCount = useMemo(() => cart.reduce((s, i) => s + i.qty, 0), [cart]);
+  const cartTotal = useMemo(() => cart.reduce((s, i) => s + i.product.price * i.qty, 0), [cart]);
+
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return products.filter(p =>
+      !q || p.name.toLowerCase().includes(q) || p.seller.toLowerCase().includes(q)
+    );
+  }, [products, searchQuery]);
+
+  const groupedNotifications = useMemo(() => ({
     seller: notifications.filter(n => n.for === "seller"),
     buyer: notifications.filter(n => n.for === "buyer")
-  };
+  }), [notifications]);
 
-  // Función para convertir timestamp de Firestore
-  const convertTimestamp = (createdAt: any) => {
-    if (!createdAt) return "";
+  const profileUser = useMemo(() => user ? {
+    uid: user.uid,
+    displayName: user.displayName ?? undefined,
+    email: user.email ?? undefined,
+    phone: (user as any).phone ?? undefined,
+    major: (user as any).major ?? undefined,
+    photoURL: user.photoURL ?? undefined,
+    semester: (user as any).semester ?? undefined,
+    seller: (user as any).seller ?? false
+  } : undefined, [user]);
 
-    if (createdAt.toDate) {
-      return createdAt.toDate().toLocaleString("es-CO");
+  const isHome = view === "home";
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🎯 HANDLERS - Carrito
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const addToCart = useCallback(async (product: Product) => {
+    setCart((prev) => {
+      const hit = prev.find((i) => i.product.id === product.id);
+      if (hit) return prev.map((i) => i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, { product, qty: 1 }];
+    });
+
+    if (!user) return;
+    try {
+      const existing = cart.find(i => i.product.id === product.id);
+      const newQty = existing ? existing.qty + 1 : 1;
+      await addCartlist(user.uid, product.id, newQty);
+    } catch (err) {
+      console.error("Error updating cart:", err);
     }
+  }, [user, cart]);
 
-    if (createdAt.seconds) {
-      return new Date(createdAt.seconds * 1000).toLocaleString("es-CO");
+  const updateQty = useCallback(async (id: string, delta: number) => {
+    setCart((prev) =>
+      prev
+        .map((i) => i.product.id === id ? { ...i, qty: i.qty + delta } : i)
+        .filter((i) => i.qty > 0)
+    );
+
+    if (!user) return;
+    try {
+      const item = cart.find(i => i.product.id === id);
+      const newQty = item ? item.qty + delta : delta;
+      if (newQty > 0) {
+        await addCartlist(user.uid, id, newQty);
+      } else {
+        await removeCartlist(user.uid, id);
+      }
+    } catch (err) {
+      console.error("Error syncing cart:", err);
     }
+  }, [user, cart]);
 
-    if (typeof createdAt === "string") {
-      return createdAt;
+  // ─ Wishlist ────────────────────────────────────────────────────────────
+  const toggleWishlist = useCallback(async (productId: string) => {
+    if (!user) return;
+
+    if (wishlist.includes(productId)) {
+      await removeWishlist(user.uid, productId);
+      setWishlist(prev => prev.filter(id => id !== productId));
+    } else {
+      await addWishlist(user.uid, productId);
+      setWishlist(prev => [...prev, productId]);
     }
+  }, [user, wishlist]);
 
-    return "";
-  };
+  // ─ Crear Orden ─────────────────────────────────────────────────────────
+  const placeOrder = useCallback(async () => {
+    const grouped: Record<string, { productId: string; qty: number; price: number; image: string; name: string }[]> = {};
 
-  const handleNotificationClick = async (notificationId: string) => {
+    cart.forEach(ci => {
+      const sellerId = ci.product.sellerId || 'unknown';
+      if (!grouped[sellerId]) grouped[sellerId] = [];
+      grouped[sellerId].push({
+        productId: ci.product.id,
+        qty: ci.qty,
+        price: ci.product.price,
+        image: ci.product.image,
+        name: ci.product.name
+      });
+    });
+
+    try {
+      const orderPromises = Object.entries(grouped).map(([sellerId, items]) =>
+        createOrder(user!.uid, sellerId, items)
+      );
+
+      await Promise.all(orderPromises);
+
+      try {
+        await Promise.all(cart.map(ci => removeCartlist(user!.uid, ci.product.id)));
+      } catch (rmErr) {
+        console.error('Error removing cart items:', rmErr);
+      }
+
+      setOrderPlaced(true);
+      setCart([]);
+      setCartOpen(false);
+      setTimeout(() => setOrderPlaced(false), 3500);
+    } catch (error) {
+      console.error('Error placing orders:', error);
+    }
+  }, [cart, user]);
+
+  // ─ Cargar más productos ────────────────────────────────────────────────
+  const loadMore = useCallback(async () => {
+    if (!lastDoc) return;
+    setLoadingMore(true);
+
+    try {
+      const result = await getProductsPage(activeCategory, lastDoc);
+      setProducts(prev => [...prev, ...result.products]);
+      setLastDoc(result.lastDoc);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [lastDoc, activeCategory]);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🎯 HANDLERS - Notificaciones
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const handleNotificationClick = useCallback(async (notificationId: string) => {
     try {
       if (!user) return;
 
-      // Encontrar la notificación para obtener su tipo
       const notification = notifications.find(n => n.id === notificationId);
-      if (!notification) return;
+      if (!notification || notification.read) return;
 
-      const notificationType = notification.for; // "buyer" o "seller"
-
-      if (notification.read) {
-        // Si ya está leída, no hacemos nada
-        return;
-      }
-
-      // Pasar el tipo a la función de actualización
+      const notificationType = notification.for;
       await markNotificationAsRead(user.uid, notificationId, notificationType, sellerData);
 
-      // Actualizar en el estado local
       setNotifications(prev =>
         prev.map(notif =>
           notif.id === notificationId ? { ...notif, read: true } : notif
@@ -119,118 +414,88 @@ export default function Marketplace() {
     } catch (err) {
       console.error("Error marking notification as read:", err);
     }
-  };
+  }, [user, notifications, sellerData]);
 
-  // Cambiar estado de una notificación/pedido (UI local)
-  const statuses = ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"];
-  const getStatusClass = (s: string) => {
-    switch (s) {
-      case "PENDING": return "bg-yellow-100 text-yellow-800";
-      case "PROCESSING": return "bg-blue-100 text-blue-800";
-      case "SHIPPED": return "bg-purple-100 text-purple-800";
-      case "DELIVERED": return "bg-green-100 text-green-800";
-      case "CANCELLED": return "bg-red-100 text-red-800";
-      default: return "bg-muted text-foreground";
-    }
-  };
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 📡 EFFECTS
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  const changeNotificationStatus = (id: string, status: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, status } : n));
-  };
-
-  // Función helper para obtener icono según tipo
-  const getNotificationIcon = (type: string) => {
-    switch (type) {
-      case "ORDER_CREATED":
-        return <Package size={16} className="text-primary" />;
-      case "ORDER_COMPLETED":
-        return <CheckCircle2 size={16} className="text-green-500" />;
-      default:
-        return <Bell size={16} className="text-muted-foreground" />;
-    }
-  };
-
-
-  //user
+  // Cargar datos iniciales del usuario
   useEffect(() => {
-
     if (!user) {
       setSellerData(null);
+      setOrders([]);
       return;
     }
+
     const uid = user.uid;
 
-    async function loadInfoUser() {
+    async function loadUserData() {
+      try {
+        const [pedidos, userData] = await Promise.all([
+          getOrdersByUser(uid),
+          getUser(uid),
+        ]);
 
-      const pedidos = await getOrdersByUser(uid);
+        // Procesar órdenes
+        const ordersData = pedidos.map((pedido: any) => ({
+          id: pedido.humanId,
+          product: pedido.items?.length > 0
+            ? `${pedido.items[0].name}${pedido.items.length > 1 ? ` +${pedido.items.length - 1}` : ""}`
+            : "Sin producto",
+          seller: pedido.seller || "Vendedor desconocido",
+          sellerPhone: pedido.sellerPhone || "N/A",
+          status: pedido.status || "PENDING",
+          statusLabel: getStatusLabel(pedido.status),
+          date: pedido.date || "Fecha no disponible",
+          price: pedido.price || 0,
+          image: pedido.items?.[0]?.image ?? "",
+          itemCount: pedido.items?.length || 0,
+          allItems: pedido.items || [],
+        }));
 
-      console.log("pedidos: \n", pedidos);
+        setOrders(ordersData);
 
+        // Actualizar datos del usuario
+        if (userData) {
+          (user as any).major = userData.career ?? undefined;
+          (user as any).semester = userData.semester ?? undefined;
+          (user as any).seller = userData.seller ?? false;
+        }
 
-      const ordersData = pedidos.map((pedido: any) => ({
-        id: pedido.humanId,
-        product: pedido.items?.length > 0
-          ? `${pedido.items[0].name}${pedido.items.length > 1 ? ` +${pedido.items.length - 1}` : ""}`
-          : "Sin producto",
-        seller: pedido.seller || "Vendedor desconocido",
-        sellerPhone: pedido.sellerPhone || "N/A",
-        status: pedido.status || "PENDING",
-        statusLabel: getStatusLabel(pedido.status),
-        date: pedido.date || "Fecha no disponible",
-        price: pedido.price || 0,
-        image: pedido.items?.[0]?.image ?? "",
-        itemCount: pedido.items?.length || 0,
-        allItems: pedido.items || [],
-      }));
-
-      setOrders(ordersData);
-
-      const userData = await getUser(uid);
-
-      if (userData) {
-        (user as any).major = userData.career ?? undefined;
-        (user as any).semester = userData.semester ?? undefined;
-        (user as any).seller = userData.seller ?? false;
-
-      }
-
-      if (userData?.seller === undefined) {
-        (user as any).seller = false;
-      }
-
-      if (userData?.seller === true) {
-        const sellerProfile = await getSellerByOwner(uid);
-        (user as any).sellerData = sellerProfile;
-        setSellerData(sellerProfile);
-        console.log("Datos del vendedor:", sellerProfile);
-      } else {
-        setSellerData(null);
+        // Cargar perfil del vendedor si existe
+        if (userData?.seller === true) {
+          const sellerProfile = await getSellerByOwner(uid);
+          (user as any).sellerData = sellerProfile;
+          setSellerData(sellerProfile);
+        } else {
+          setSellerData(null);
+        }
+      } catch (err) {
+        console.error("Error loading user data:", err);
       }
     }
 
-    loadInfoUser();
-
+    loadUserData();
   }, [user]);
 
-  // wishlist
+  // Cargar wishlist
   useEffect(() => {
-
     if (!user) return;
-    const uid = user.uid;
 
     async function loadWishlist() {
-
-      const favs = await getWishlist(uid);
-
-      setWishlist(favs);
-
+      try {
+        const favs = await getWishlist(user!.uid);
+        setWishlist(favs);
+      } catch (err) {
+        console.error("Error loading wishlist:", err);
+      }
     }
 
     loadWishlist();
-
   }, [user]);
 
-  // Notifications
+  // Cargar notificaciones
   useEffect(() => {
     if (!user) {
       setNotifications([]);
@@ -243,20 +508,19 @@ export default function Marketplace() {
     async function loadNotificationsList() {
       try {
         const sellerId = sellerData?.id ?? (typeof sellerData === "string" ? sellerData : undefined);
-        const buyerId = userid;
 
         const [sellerNotifications, buyerNotifications] = await Promise.all([
           sellerId ? getNotificationsSeller(sellerId) : Promise.resolve([]),
-          getNotifications(buyerId)
+          getNotifications(userid)
         ]);
 
-        // Deduplicar por ID usando Map
+        // Deduplicar
         const uniqueNotifications = Array.from(
           new Map(
             [...sellerNotifications, ...buyerNotifications].map((notif: any) => [notif.id, notif])
           ).values()
         );
-        console.log("Unique notifications:", uniqueNotifications);
+
         setNotifications(uniqueNotifications);
       } catch (err) {
         console.error("Error loading notifications:", err);
@@ -269,15 +533,9 @@ export default function Marketplace() {
     loadNotificationsList();
   }, [user, sellerData]);
 
-  // Cart
+  // Cargar carrito
   useEffect(() => {
-
-    if (!user) {
-      setCart([]);
-      return;
-    }
-
-    if (view !== "home" || products.length === 0) return;
+    if (!user || view !== "home" || products.length === 0) return;
 
     async function loadCart() {
       try {
@@ -287,80 +545,61 @@ export default function Marketplace() {
           return;
         }
 
-        setCart((prev) =>
+        setCart(
           cartItems
             .map((entry: any) => {
-              // support multiple shapes: string id or object { id/productId, quantity/qty }
               const productId = typeof entry === "string" ? entry : entry.productId ?? entry.id;
               const qty = typeof entry === "string" ? 1 : entry.quantity ?? entry.qty ?? 1;
-
               const product = products.find((p) => p.id === productId);
               if (!product) return null;
               return { product, qty };
             })
             .filter((item): item is CartItem => item !== null)
         );
-        // console.log("caritems: ", cartItems);
-
       } catch (err) {
-        console.error("Error loading cart from firestore", err);
+        console.error("Error loading cart:", err);
       }
     }
 
     loadCart();
-
   }, [user, view, products]);
 
-  // Products
+  // Cargar productos e inicial
   useEffect(() => {
-
     async function loadData() {
-
       try {
+        const [productsData, categoriesData, sellersData] = await Promise.all([
+          getProductsPage(activeCategory),
+          getCategories(),
+          getSellers()
+        ]);
 
-        const [productsData, categoriesData, sellersData] =
-          await Promise.all([
-            getProductsPage(activeCategory),
-            getCategories(),
-            getSellers()
-          ]);
         setProducts(productsData.products);
         setLastDoc(productsData.lastDoc);
         setCategories(categoriesData);
         setFeaturedSellers(sellersData);
-
       } catch (error) {
-
-        console.error(error);
-
+        console.error("Error loading data:", error);
       } finally {
-
         setLoadingProducts(false);
-
       }
-
     }
 
     loadData();
-
   }, []);
 
-  // Products Category
+  // Cambiar categoría
   useEffect(() => {
-
     async function reloadProducts() {
-
       const result = await getProductsPage(activeCategory);
-
       setProducts(result.products);
       setLastDoc(result.lastDoc);
-
     }
 
     reloadProducts();
-
   }, [activeCategory]);
 
+  // Abrir formulario de negocio
   useEffect(() => {
     if (view !== "profile" || !openRegisterBusinessForm) return;
 
@@ -379,210 +618,32 @@ export default function Marketplace() {
     return () => window.clearTimeout(timeout);
   }, [view, openRegisterBusinessForm]);
 
-  if (loadingProducts) {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 🎨 RENDER
+  // ═══════════════════════════════════════════════════════════════════════════
 
-    return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100vh"
-        }}
-      >
-        Cargando productos...
-      </div>
-    );
-
-  }
-
-
-
-  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
-  const cartTotal = cart.reduce((s, i) => s + i.product.price * i.qty, 0);
-
-  const addToCart = async (product: Product) => {
-    setCart((prev) => {
-      const hit = prev.find((i) => i.product.id === product.id);
-      if (hit) return prev.map((i) => i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i);
-
-      return [...prev, { product, qty: 1 }];
-    });
-
-    if (!user) return;
-    try {
-      const existing = cart.find(i => i.product.id === product.id);
-      const newQty = existing ? existing.qty + 1 : 1;
-      await addCartlist(user.uid, product.id, newQty);
-    } catch (err) {
-      console.error("Error updating cart in firestore", err);
-    }
-  };
-
-  const updateQty = async (id: string, delta: number) => {
-    setCart((prev) =>
-      prev
-        .map((i) => i.product.id === id ? { ...i, qty: i.qty + delta } : i)
-        .filter((i) => i.qty > 0)
-    );
-
-    if (!user) return;
-
-    try {
-      const item = cart.find(i => i.product.id === id);
-      const newQty = item ? item.qty + delta : delta;
-      if (newQty > 0) {
-        await addCartlist(user.uid, id, newQty);
-      } else {
-        await removeCartlist(user.uid, id);
-      }
-    } catch (err) {
-      console.error("Error syncing cart qty with firestore", err);
-    }
-  };
-
-  const toggleWishlist = async (productId: string) => {
-
-    if (!user) return;
-
-    if (wishlist.includes(productId)) {
-
-      await removeWishlist(user.uid, productId);
-
-      setWishlist(prev =>
-        prev.filter(id => id !== productId)
-      );
-
-    } else {
-
-      await addWishlist(user.uid, productId);
-
-      setWishlist(prev => [...prev, productId]);
-
-    }
-
-  };
-
-  const placeOrder = async () => {
-    // Agrupar los ítems del carrito por vendedor y crear un pedido por vendedor
-    const grouped: Record<string, { productId: string; qty: number; price: number; image: string; name: string }[]> = {};
-
-    cart.forEach(ci => {
-      const sellerId = ci.product.sellerId || 'unknown';
-      if (!grouped[sellerId]) grouped[sellerId] = [];
-      grouped[sellerId].push({
-        productId: ci.product.id,
-        qty: ci.qty,
-        price: ci.product.price,
-        image: ci.product.image,
-        name: ci.product.name
-      });
-    });
-
-    try {
-      // Crear una orden por cada vendedor
-      const orderPromises = Object.entries(grouped).map(([sellerId, items]) =>
-        createOrder(user!.uid, sellerId, items)
-      );
-
-      const createdOrderIds = await Promise.all(orderPromises);
-      console.log('Orders created:', createdOrderIds);
-
-      // si todo sale bien, eliminar los items del carrito en Firestore
-      try {
-        const currentCart = [...cart];
-        await Promise.all(currentCart.map(ci =>
-          removeCartlist(user!.uid, ci.product.id)
-        ));
-      } catch (rmErr) {
-        console.error('Error removing cart items:', rmErr);
-      }
-
-      setOrderPlaced(true);
-      setCart([]);
-      setCartOpen(false);
-      setTimeout(() => setOrderPlaced(false), 3500);
-    } catch (error) {
-      console.error('Error placing orders:', error);
-    }
-  };
-
-  const filteredProducts = products.filter((p) => {
-
-    const q = searchQuery.toLowerCase();
-
-    return (
-      !q ||
-      p.name.toLowerCase().includes(q) ||
-      p.seller.toLowerCase().includes(q)
-    );
-
-  });
-
-
-  const loadMore = async () => {
-
-
-    if (!lastDoc) return;
-    // console.log("lastDoc actual:", lastDoc?.id);
-
-    setLoadingMore(true);
-
-    try {
-
-      const result = await getProductsPage(activeCategory, lastDoc);
-
-      setProducts(prev => [
-        ...prev,
-        ...result.products
-      ]);
-
-      setLastDoc(result.lastDoc);
-
-    } finally {
-
-      setLoadingMore(false);
-
-    }
-
-  };
-
-  const profileUser = user
-    ? {
-      uid: user.uid,
-      displayName: user.displayName ?? undefined,
-      email: user.email ?? undefined,
-      phone: (user as any).phone ?? undefined,
-      major: (user as { major?: string }).major ?? undefined,
-      photoURL: user.photoURL ?? undefined,
-      semester: (user as { semester?: string }).semester ?? undefined,
-      seller: (user as { seller?: boolean }).seller ?? false
-    }
-    : undefined;
-
-  const isHome = view === "home";
   if (loading) {
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100vh",
-          fontSize: "22px",
-        }}
-      >
+      <div className="flex justify-center items-center h-screen text-xl">
         Cargando...
       </div>
     );
   }
+
+  if (loadingProducts) {
+    return (
+      <div className="flex justify-center items-center h-screen text-xl">
+        Cargando productos...
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
 
       {/* ───── Header ───── */}
       <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-md border-b border-border">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
-          {/* Logo */}
           <button
             onClick={() => setView("home")}
             className="flex items-center gap-2 shrink-0 mr-1"
@@ -616,7 +677,7 @@ export default function Marketplace() {
             )}
           </div>
 
-          {/* Bell */}
+          {/* Notificaciones */}
           <button
             onClick={() => setNotificationsOpen(true)}
             className="relative p-2 hover:bg-secondary rounded-xl transition shrink-0"
@@ -625,7 +686,7 @@ export default function Marketplace() {
             <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-background" />
           </button>
 
-          {/* Cart */}
+          {/* Carrito */}
           <button
             onClick={() => setCartOpen(true)}
             className="relative p-2 hover:bg-secondary rounded-xl transition shrink-0"
@@ -646,16 +707,13 @@ export default function Marketplace() {
             </AnimatePresence>
           </button>
 
-          <button
-            onClick={logout}
-            className="px-3 py-2 rounded-xl bg-primary text-white text-sm"
-          >
+          <button onClick={logout} className="px-3 py-2 rounded-xl bg-primary text-white text-sm">
             Salir
           </button>
         </div>
       </header>
 
-      {/* ───── Category Bar (home only) ───── */}
+      {/* ───── Category Bar ───── */}
       {isHome && (
         <div className="sticky top-14 z-30 bg-background/95 backdrop-blur-md border-b border-border">
           <div className="max-w-5xl mx-auto px-4">
@@ -689,7 +747,7 @@ export default function Marketplace() {
               <div className="mt-4 mb-5 relative overflow-hidden rounded-3xl h-48 sm:h-64 bg-amber-100">
                 <img
                   src="https://images.unsplash.com/photo-1541339907198-e08756dedf3f?w=1000&h=500&fit=crop&auto=format"
-                  alt="Mercado universitario con variedad de productos"
+                  alt="Mercado universitario"
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-gradient-to-r from-foreground/75 via-foreground/35 to-transparent" />
@@ -711,7 +769,7 @@ export default function Marketplace() {
               </div>
             )}
 
-            {/* Section heading */}
+            {/* Section Heading */}
             <div className="flex items-baseline justify-between mb-4 mt-2">
               <h2 className="font-display text-lg font-semibold text-foreground">
                 {searchQuery
@@ -772,9 +830,9 @@ export default function Marketplace() {
                       <p className="text-sm font-semibold text-foreground leading-tight line-clamp-2 mb-2 min-h-[2.5em]">
                         {product.name}
                       </p>
-                      <StarsRow rating={product.rating} count={product.reviews} />
+                      <StarsRow />
                       <div className="flex items-center justify-between mt-2">
-                        <span className="text-sm font-bold text-primary">{fmt(product.price)}</span>
+                        <span className="text-sm font-bold text-primary">{formatCurrency(product.price)}</span>
                         <button
                           onClick={(e) => { e.stopPropagation(); addToCart(product); }}
                           className="w-7 h-7 bg-primary text-primary-foreground rounded-full flex items-center justify-center hover:bg-primary/90 transition active:scale-90 shadow-sm"
@@ -789,55 +847,16 @@ export default function Marketplace() {
               </div>
             )}
 
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginTop: 30
-              }}
-            >
-
+            {/* Load More Button */}
+            <div style={{ display: "flex", justifyContent: "center", marginTop: 30 }}>
               <button
                 onClick={loadMore}
                 disabled={loadingMore || !lastDoc}
                 className="px-4 py-2 bg-primary text-primary-foreground text-sm font-semibold rounded-2xl hover:bg-primary/90 transition active:scale-95 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-
-                {loadingMore
-                  ? "Cargando..."
-                  : "Ver más"}
-
+                {loadingMore ? "Cargando..." : "Ver más"}
               </button>
-
             </div>
-
-            {/* Featured Sellers */}
-            {/* {activeCategory === "all" && !searchQuery && (
-              <section className="mt-10">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-display text-lg font-semibold text-foreground">Vendedores Destacados</h2>
-                  <button className="text-xs text-primary font-medium hover:underline">Ver todos</button>
-                </div>
-                <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
-                  {featuredSellers.map((seller) => (
-                    <button
-                      key={seller.name}
-                      className="flex-shrink-0 flex flex-col items-center gap-2 group"
-                    >
-                      <div className="w-16 h-16 rounded-2xl overflow-hidden bg-muted border border-border group-hover:shadow-md transition-shadow">
-                        <img src={seller.image} alt={seller.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                      </div>
-                      <div className="text-center w-16">
-                        <p className="text-[11px] font-semibold text-foreground truncate leading-tight">{seller.name}</p>
-                        <p className="text-[10px] text-muted-foreground">{seller.tag}</p>
-                        <StarsRow rating={seller.rating} />
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )} */}
 
             {/* Seller CTA */}
             {activeCategory === "all" && !searchQuery && !(user as any)?.seller && (
@@ -868,23 +887,21 @@ export default function Marketplace() {
             <h2 className="font-display text-2xl font-bold text-foreground mb-2">Mis Pedidos</h2>
             <p className="text-sm text-muted-foreground mb-6">{orders.length} pedidos en total</p>
 
-            {/* Active orders */}
-            {orders.filter((o) => o.status === "ready").length > 0 && (
+            {orders.filter((o) => o.status === "READY").length > 0 && (
               <div className="mb-6">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Activos</p>
                 <div className="flex flex-col gap-2">
-                  {orders.filter((o) => o.status === "ready").map((order) => (
+                  {orders.filter((o) => o.status === "READY").map((order) => (
                     <OrderCard key={order.id} order={order} />
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Past orders */}
             <div>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Historial</p>
               <div className="flex flex-col gap-2">
-                {orders.filter((o) => o.status !== "ready").map((order) => (
+                {orders.filter((o) => o.status !== "READY").map((order) => (
                   <OrderCard key={order.id} order={order} />
                 ))}
               </div>
@@ -902,19 +919,15 @@ export default function Marketplace() {
           {(
             [
               { id: "home" as AppView, icon: Home, label: "Inicio" },
-              { id: null, icon: Compass, label: "Explorar" },
               { id: "orders" as AppView, icon: ClipboardList, label: "Pedidos" },
               { id: "profile" as AppView, icon: User, label: "Perfil" },
             ] as const
           ).map(({ id, icon: Icon, label }) => {
-            const active = id === null ? isHome : view === id;
+            const active = view === id;
             return (
               <button
                 key={label}
-                onClick={() => {
-                  if (id === null) { setView("home"); setActiveCategory("all"); setSearchQuery(""); }
-                  else setView(id);
-                }}
+                onClick={() => setView(id)}
                 className={`flex-1 flex flex-col items-center gap-1 py-2.5 transition ${active ? "text-primary" : "text-muted-foreground hover:text-foreground"
                   }`}
               >
@@ -926,7 +939,7 @@ export default function Marketplace() {
         </div>
       </nav>
 
-      {/* ───── Desktop Tab Nav (sm+, below content as footer) ───── */}
+      {/* ───── Desktop Tab Nav ───── */}
       <div className="hidden sm:flex sticky bottom-0 z-30 mt-8 w-full justify-center px-4 pb-4">
         <div className="bg-card border border-border rounded-2xl shadow-lg px-2 py-1.5 gap-1 flex items-center">
           {(
@@ -950,6 +963,8 @@ export default function Marketplace() {
           ))}
         </div>
       </div>
+
+      {/* ───── Notifications Drawer ───── */}
       <AnimatePresence>
         {notificationsOpen && (
           <>
@@ -968,7 +983,6 @@ export default function Marketplace() {
               transition={{ type: "spring", damping: 28, stiffness: 280 }}
               className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-sm bg-background shadow-2xl flex flex-col"
             >
-              {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                 <h2 className="font-display text-lg font-bold">Notificaciones</h2>
                 <button
@@ -1014,7 +1028,6 @@ export default function Marketplace() {
                 </button>
               </div>
 
-              {/* Contenido */}
               <div className="flex-1 overflow-y-auto">
                 {loadingNotifications ? (
                   <div className="flex items-center justify-center h-full text-muted-foreground">
@@ -1028,9 +1041,7 @@ export default function Marketplace() {
                         <div className="w-16 h-16 bg-secondary rounded-2xl flex items-center justify-center">
                           <Bell size={26} />
                         </div>
-                        <p className="font-semibold text-foreground">
-                          Aún no tienes notificaciones.
-                        </p>
+                        <p className="font-semibold text-foreground">Aún no tienes notificaciones.</p>
                         <p className="text-sm">Las nuevas alertas aparecerán aquí.</p>
                       </div>
                     ) : (
@@ -1050,20 +1061,16 @@ export default function Marketplace() {
                               }`}
                           >
                             <div className="flex items-start gap-3">
-                              {/* Icono del tipo de notificación */}
                               <div className="flex-shrink-0 mt-1">
                                 {getNotificationIcon(item.type)}
                               </div>
 
-                              {/* Contenido principal */}
                               <div className="flex-1 min-w-0">
-                                {/* Fila 1: Título y indicadores */}
                                 <div className="flex items-start justify-between gap-2 mb-2">
                                   <div className="flex-1">
                                     <p className="text-sm font-semibold text-foreground leading-snug">
                                       {item.humanId}
                                     </p>
-                                    {/* Badges */}
                                     <div className="flex items-center gap-2 mt-2">
                                       {item.type && (
                                         <span className="text-[11px] px-2 py-1 rounded-full bg-green-500/15 text-green-600 dark:text-green-400 font-medium">
@@ -1071,18 +1078,13 @@ export default function Marketplace() {
                                         </span>
                                       )}
                                       {item.status && (
-                                        <span
-                                          className={`text-[10px] px-2 py-1 rounded-full font-medium ${getStatusClass(
-                                            item.status
-                                          )}`}
-                                        >
+                                        <span className={`text-[10px] px-2 py-1 rounded-full font-medium ${getStatusClass(item.status)}`}>
                                           {item.status}
                                         </span>
                                       )}
                                     </div>
                                   </div>
 
-                                  {/* Puntito de no leído con animación */}
                                   {!item.read && (
                                     <motion.div
                                       initial={{ scale: 0 }}
@@ -1098,13 +1100,12 @@ export default function Marketplace() {
                                   )}
                                 </div>
 
-                                {/* Fila 2: Mensaje */}
                                 {item.message && (
                                   <p className="text-sm text-muted-foreground leading-relaxed mb-3">
                                     {item.message}
                                   </p>
                                 )}
-                                {/* Fila 3: Fecha (más legible) */}
+
                                 {item.createdAt && (
                                   <div className="flex items-center justify-between pt-2 border-t border-border/30">
                                     <span className="text-xs text-muted-foreground">
@@ -1186,7 +1187,7 @@ export default function Marketplace() {
                       <div className="flex-1 min-w-0">
                         <p className="text-[10px] text-muted-foreground truncate">{product.seller}</p>
                         <p className="text-sm font-semibold text-foreground truncate leading-tight">{product.name}</p>
-                        <p className="text-sm font-bold text-primary mt-0.5">{fmt(product.price * qty)}</p>
+                        <p className="text-sm font-bold text-primary mt-0.5">{formatCurrency(product.price * qty)}</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
@@ -1216,7 +1217,7 @@ export default function Marketplace() {
                 <div className="px-5 py-4 border-t border-border shrink-0 bg-background">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm text-muted-foreground">Subtotal</span>
-                    <span className="text-sm font-semibold text-foreground">{fmt(cartTotal)}</span>
+                    <span className="text-sm font-semibold text-foreground">{formatCurrency(cartTotal)}</span>
                   </div>
                   <div className="flex items-center justify-between mb-4">
                     <span className="text-sm text-muted-foreground">Entrega en campus</span>
@@ -1224,7 +1225,7 @@ export default function Marketplace() {
                   </div>
                   <div className="flex items-center justify-between mb-5 pt-3 border-t border-border">
                     <span className="font-display text-base font-bold text-foreground">Total</span>
-                    <span className="font-display text-xl font-bold text-foreground">{fmt(cartTotal)}</span>
+                    <span className="font-display text-xl font-bold text-foreground">{formatCurrency(cartTotal)}</span>
                   </div>
                   <button
                     onClick={async () => {
@@ -1267,12 +1268,10 @@ export default function Marketplace() {
               transition={{ type: "spring", damping: 30, stiffness: 300 }}
               className="fixed bottom-0 inset-x-0 z-50 sm:bottom-8 sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-md bg-background rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden"
             >
-              {/* Drag handle */}
               <div className="sm:hidden flex justify-center pt-3 pb-1">
                 <div className="w-10 h-1 bg-border rounded-full" />
               </div>
 
-              {/* Image */}
               <div className="relative h-52 sm:h-60 bg-muted">
                 <img
                   src={selectedProduct.image}
@@ -1297,21 +1296,20 @@ export default function Marketplace() {
                 </button>
               </div>
 
-              {/* Info */}
               <div className="p-5">
                 <div className="flex items-start justify-between gap-3 mb-1">
                   <h3 className="font-display text-xl font-bold text-foreground leading-tight flex-1">
                     {selectedProduct.name}
                   </h3>
                   <span className="font-display text-xl font-bold text-primary shrink-0">
-                    {fmt(selectedProduct.price)}
+                    {formatCurrency(selectedProduct.price)}
                   </span>
                 </div>
 
                 <p className="text-sm text-muted-foreground mb-2">{selectedProduct.seller}</p>
 
                 <div className="flex items-center gap-3 mb-3 flex-wrap">
-                  <StarsRow rating={selectedProduct.rating} count={selectedProduct.reviews} />
+                  <StarsRow />
                   <span className="flex items-center gap-1 text-xs text-muted-foreground">
                     <MapPin size={10} />
                     {selectedProduct.location}
@@ -1348,7 +1346,6 @@ export default function Marketplace() {
             <div>
               <p className="text-sm font-bold">¡Pedido realizado!</p>
               <p className="text-xs opacity-70">Recibirás una notificación cuando esté listo</p>
-
             </div>
           </motion.div>
         )}
@@ -1357,158 +1354,3 @@ export default function Marketplace() {
     </div>
   );
 }
-
-// ─── Order Card ───────────────────────────────────────────────────────────────
-
-interface OrderItem {
-  name?: string;
-  image?: string;
-  qty?: number;
-  price?: number;
-}
-
-interface OrderData {
-  id: string;
-  product: string;
-  seller: string;
-  sellerPhone: string;
-  status: "READY" | "DELIVERED" | "PENDING" | "ACCEPTED" | "PREPARING" | "CANCELLED";
-  statusLabel: string;
-  date: string;
-  price: number;
-  image: string;
-  itemCount: number;
-  allItems: OrderItem[];
-}
-
-function OrderCard({ order }: { order: OrderData }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasMultipleItems = order.itemCount > 1;
-
-  // Validaciones
-  if (!order?.id || !order?.product) {
-    return null; // Evita renderizar órdenes inválidas
-  }
-
-  const handleToggleExpand = () => {
-    if (hasMultipleItems) {
-      setExpanded(!expanded);
-    }
-  };
-
-  return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden">
-      {/* Header principal */}
-      <div
-        className={`flex items-center gap-3 p-4 ${hasMultipleItems ? "cursor-pointer hover:bg-muted/50" : ""} transition-colors`}
-        onClick={handleToggleExpand}
-      >
-        {/* Imagen */}
-        <div className="w-14 h-14 rounded-xl overflow-hidden bg-muted shrink-0">
-          {order.image ? (
-            <img src={order.image} alt={order.product} className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-              <Package size={20} />
-            </div>
-          )}
-        </div>
-
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <p className="text-[10px] text-muted-foreground font-mono">{order.id || "ID no disponible"}</p>
-          <p className="text-sm font-semibold text-foreground truncate">{order.product}</p>
-          <p className="text-xs text-muted-foreground truncate">
-            {order.seller}
-            {order.sellerPhone && order.sellerPhone !== "N/A" && ` - ${order.sellerPhone}`}
-          </p>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span
-              className={`flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${order.status === "READY"
-                ? "bg-amber-100 text-amber-700"
-                : "bg-green-100 text-green-700"
-                }`}
-            >
-              {order.status === "READY" ? <Clock size={9} /> : <CheckCircle2 size={9} />}
-              {order.statusLabel || "Estado desconocido"}
-            </span>
-            <span className="text-[10px] text-muted-foreground">{order.date}</span>
-            {hasMultipleItems && (
-              <span className="text-[10px] font-medium text-primary bg-primary/10 px-2 py-0.5 rounded">
-                +{order.itemCount - 1} más
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Precio y chevron */}
-        <div className="flex items-center gap-2 shrink-0">
-          <p className="text-sm font-bold text-foreground pl-2">
-            {fmt(order.price)}
-          </p>
-          {hasMultipleItems && (
-            <ChevronDown
-              size={16}
-              className={`text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
-            />
-          )}
-        </div>
-      </div>
-
-      {/* Items expandidos */}
-      {expanded && hasMultipleItems && (
-        <div className="border-t border-border bg-muted/30">
-          <div className="p-3 space-y-2">
-            {order.allItems && order.allItems.length > 0 ? (
-              order.allItems.map((item, index) => (
-                <div key={index} className="flex items-center gap-2 p-2 bg-card rounded-lg">
-                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-muted shrink-0">
-                    {item.image ? (
-                      <img src={item.image} alt={item.name || "Producto"} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                        <Package size={14} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{item.name || "Producto sin nombre"}</p>
-                    {item.qty && item.qty > 1 && (
-                      <p className="text-[10px] text-muted-foreground">Cantidad: {item.qty}</p>
-                    )}
-                  </div>
-                  {item.price && item.price > 0 && (
-                    <p className="text-xs font-semibold text-foreground shrink-0">
-                      {fmt(item.price * (item.qty || 1))}
-                    </p>
-                  )}
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-2">No hay items disponibles</p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-const getStatusLabel = (status: string) => {
-  switch (status) {
-    case "PENDING":
-      return "Pendiente";
-    case "ACCEPTED":
-      return "Aceptado";
-    case "PREPARING":
-      return "Preparando";
-    case "READY":
-      return "Listo para recoger";
-    case "DELIVERED":
-      return "Entregado";
-    case "CANCELLED":
-      return "Cancelado";
-    default:
-      return status;
-  }
-};
-

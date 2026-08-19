@@ -2,14 +2,17 @@ import {
   collection,
   doc,
   getDocs,
+  addDoc,
   setDoc,
   deleteDoc,
   query,
   where,
-  getDoc
+  getDoc,
+  serverTimestamp
 } from "firebase/firestore";
 
 import { db } from "./config";
+import { getUser } from "./userService";
 
 
 export type Order = {
@@ -37,9 +40,21 @@ export async function getOrders(): Promise<Order[]> {
 export async function getOrdersBySeller(sellerId: string): Promise<Order[]> {
   const q = query(ordersCollection, where('sellerId', '==', sellerId));
   const snap = await getDocs(q);
-  const orders: Order[] = [];
-  snap.forEach((docSnap) => orders.push({ id: docSnap.id, ...(docSnap.data() as any) }));
-  return orders;
+
+  const ordersWithUsers = await Promise.all(
+    snap.docs.map(async (docSnap) => {
+      const orderData = docSnap.data() as any;
+      const buyer = await getUser(orderData.buyerId);
+
+      return {
+        id: docSnap.id,
+        ...orderData,
+        buyer: buyer
+      };
+    })
+  );
+
+  return ordersWithUsers;
 }
 
 async function getSellerById(sellerId: string) {
@@ -105,9 +120,31 @@ export async function getOrderById(orderId: string): Promise<Order | null> {
   return { id: snap.id, ...(snap.data() as any) };
 }
 
+export async function statusChange(orderId: string, status: string): Promise<void> {
+  const d = doc(db, 'orders', orderId);
+  const orderSnap = await getDoc(d);
+  if (!orderSnap.exists()) return;
+
+  await setDoc(d, { status }, { merge: true });
+
+  const orderData = orderSnap.data() as any;
+  if (orderData.buyerId) {
+    await addDoc(collection(db, 'users', orderData.buyerId, 'notifications'), {
+      type: 'order_status_change',
+      orderId,
+      status,
+      for: 'buyer',
+      message: `El estado de tu pedido cambió a: ${status}`,
+      read: false,
+      createdAt: serverTimestamp(),
+    });
+  }
+}
+
 export default {
   getOrders,
   getOrdersBySeller,
   getOrdersByUser,
   getOrderById,
+  statusChange,
 };

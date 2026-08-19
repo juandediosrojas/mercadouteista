@@ -4,6 +4,7 @@ import {
   useEffect,
   useState,
   ReactNode,
+  useCallback,
 } from "react";
 
 import {
@@ -27,47 +28,45 @@ import {
   setDoc,
 } from "firebase/firestore";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔐 TIPOS
+// ═══════════════════════════════════════════════════════════════════════════
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-
   login: (email: string, password: string) => Promise<void>;
-
-  register: (
-    displayName: string,
-    email: string,
-    password: string
-  ) => Promise<void>;
-
+  register: (displayName: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-
   loginWithGoogle: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType>(
-  {} as AuthContextType
-);
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔐 CONTEXTO
+// ═══════════════════════════════════════════════════════════════════════════
 
-export function AuthProvider({
-  children,
-}: {
-  children: ReactNode;
-}) {
+const AuthContext = createContext<AuthContextType>({} as AuthContextType);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔐 PROVIDER
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-
   const [loading, setLoading] = useState(true);
 
+  // ─ Manejo de autenticación ─────────────────────────────────────────────
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       if (firebaseUser) {
         const lastSignInTime = firebaseUser.metadata?.lastSignInTime;
-        
+
         if (lastSignInTime) {
           const lastSignIn = new Date(lastSignInTime).getTime();
           const now = new Date().getTime();
-          // 2 hours in milliseconds
+          // 2 hours en milisegundos
           const timeMax = 2 * 60 * 60 * 1000;
-          
+
           if (now - lastSignIn > timeMax) {
             signOut(auth);
             setUser(null);
@@ -85,7 +84,7 @@ export function AuthProvider({
           }
         }
       }
-      
+
       setUser(firebaseUser);
       setLoading(false);
     });
@@ -93,21 +92,15 @@ export function AuthProvider({
     return unsubscribe;
   }, []);
 
-  async function register(
+  // ─ Registro ────────────────────────────────────────────────────────────
+  const register = useCallback(async (
     displayName: string,
     email: string,
     password: string
-  ) {
-    const credential =
-      await createUserWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
+  ) => {
+    const credential = await createUserWithEmailAndPassword(auth, email, password);
 
-    await updateProfile(credential.user, {
-      displayName,
-    });
+    await updateProfile(credential.user, { displayName });
 
     await setDoc(doc(db, "users", credential.user.uid), {
       uid: credential.user.uid,
@@ -119,18 +112,12 @@ export function AuthProvider({
       ...credential.user,
       displayName,
     });
-  }
+  }, []);
 
-  async function login(
-    email: string,
-    password: string
-  ) {
+  // ─ Login ───────────────────────────────────────────────────────────────
+  const login = useCallback(async (email: string, password: string) => {
     try {
-      await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (error) {
       console.error("Error logging in:", error);
       Swal.fire({
@@ -143,26 +130,21 @@ export function AuthProvider({
         timer: 3000,
       });
     }
-  }
+  }, []);
 
-  async function logout() {
+  // ─ Logout ──────────────────────────────────────────────────────────────
+  const logout = useCallback(async () => {
     await signOut(auth);
-  }
+    setUser(null);
+  }, []);
 
-  async function loginWithGoogle() {
+  // ─ Login con Google ────────────────────────────────────────────────────
+  const loginWithGoogle = useCallback(async () => {
     const provider = new GoogleAuthProvider();
 
-    const result = await signInWithPopup(
-      auth,
-      provider
-    );
+    const result = await signInWithPopup(auth, provider);
 
-    const userRef = doc(
-      db,
-      "users",
-      result.user.uid
-    );
-
+    const userRef = doc(db, "users", result.user.uid);
     const exists = await getDoc(userRef);
 
     if (!exists.exists()) {
@@ -172,23 +154,28 @@ export function AuthProvider({
         email: result.user.email,
       });
     }
-  }
+  }, []);
+
+  // ─ Valor del contexto ──────────────────────────────────────────────────
+  const value: AuthContextType = {
+    user,
+    loading,
+    login,
+    register,
+    logout,
+    loginWithGoogle,
+  };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        login,
-        register,
-        logout,
-        loginWithGoogle,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🔐 HOOK
+// ═══════════════════════════════════════════════════════════════════════════
 
 export function useAuth() {
   return useContext(AuthContext);
