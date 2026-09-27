@@ -8,4 +8,15 @@
   Run `npm i` to install the dependencies.
 
   Run `npm run dev` to start the development server.
+
+  ## Desplegar en firebase hosting
+
+  1. Instala Firebase CLI: `npm install -g firebase-tools`.
+  2. Inicia sesión: `firebase login`.
+  3. Configura Firebase Hosting: `firebase init hosting`.
+  4. Genera la aplicación: `npm run build`.
+  5. Despliega: `firebase deploy --only hosting`.
+  
+  
+ 
   
