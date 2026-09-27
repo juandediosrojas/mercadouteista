@@ -1,6 +1,9 @@
 import { ChevronRight, ClipboardList, Heart, MapPin, Store, User, Camera, Pencil } from "lucide-react";
 import { uploadImage } from "../../firebase/storageService";
 import { updateUserProfile } from "../../firebase/userService";
+import { getWishlist } from "../../firebase/wishlistService";
+import { getProducts } from "../../firebase/productService";
+import { getOrdersByUser } from "../../firebase/orderService";
 import Swal from "sweetalert2";
 import { useEffect, useState } from "react";
 import { collection, doc, getDoc, getDocs, addDoc, updateDoc } from "firebase/firestore";
@@ -39,6 +42,20 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
     const sellerStatus = firestoreUser?.seller ?? false;
     // const [showSellerDashboard, setShowSellerDashboard] = useState(false);
     const [profileSection, setProfileSection] = useState<"profile" | "dashboard">("profile");
+    const [showWishlist, setShowWishlist] = useState(false);
+    const [wishlistItems, setWishlistItems] = useState<Array<{
+        id: string;
+        image?: string;
+        name?: string;
+        description?: string;
+        seller?: string;
+    }>>([]);
+    const [isWishlistLoading, setIsWishlistLoading] = useState(false);
+    const [wishlistCount, setWishlistCount] = useState(wishlist.length);
+    const [ordersCount, setOrdersCount] = useState(0);
+    const [showOrders, setShowOrders] = useState(false);
+    const [orders, setOrders] = useState<any[]>([]);
+    const [isOrdersLoading, setIsOrdersLoading] = useState(false);
 
     const categoryTranslationMap: Record<string, string> = {
         all: 'Todos',
@@ -139,6 +156,44 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
         fetchCategories();
     }, []);
 
+    useEffect(() => {
+        const fetchWishlistCount = async () => {
+            if (!user?.uid) {
+                setWishlistCount(0);
+                return;
+            }
+
+            try {
+                const productIds = await getWishlist(user.uid);
+                setWishlistCount(productIds.length);
+            } catch (err) {
+                console.error('Error fetching wishlist:', err);
+                setWishlistCount(wishlist.length);
+            }
+        };
+
+        fetchWishlistCount();
+    }, [user?.uid, wishlist.length]);
+
+    useEffect(() => {
+        const fetchOrders = async () => {
+            if (!user?.uid) {
+                setOrdersCount(0);
+                return;
+            }
+
+            try {
+                const orders = await getOrdersByUser(user.uid);
+                setOrdersCount(orders.length);
+            } catch (err) {
+                console.error('Error fetching user orders:', err);
+                setOrdersCount(0);
+            }
+        };
+
+        fetchOrders();
+    }, [user?.uid]);
+
     const saveChanges = async () => {
         const id = user?.uid;
         if (!id) {
@@ -177,8 +232,14 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                 semester: formData.semester,
                 photoURL: formData.photoURL,
             });
+            setFirestoreUser((prev) => ({
+                ...(prev ?? { uid: id }),
+                ...formData,
+            }));
         } catch (err) {
             console.error('Failed to update user profile:', err);
+        } finally {
+            setIsEditing(false);            
         }
     };
 
@@ -299,7 +360,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
         return null;
     }
     // console.log("Rendering ProfileView with user:", user, "\n and wishlist:", wishlist, "and firestoreUser:", firestoreUser, "and sellerStatus:", sellerStatus);
-    const isLoading = !firestoreUser; // ajusta esto a tu estado real de carga
+    const isLoading = !firestoreUser ; // ajusta esto a tu estado real de carga
     if (profileSection === "dashboard") {
         return (
             <SellerDashboard
@@ -374,7 +435,7 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                         </div>
                         <div className="flex-1 min-w-0 animate-in fade-in duration-300">
                             <p className="font-display text-lg font-bold text-foreground leading-tight">
-                                {user?.displayName || "Estudiante"}
+                                {firestoreUser?.displayName || user?.displayName || "Estudiante"}
                             </p>
                             <p className="text-sm text-muted-foreground">{firestoreUser?.major || "Carrera no definida"} · {firestoreUser?.semester || "Semestre no definido"}</p>
                             <p className="text-xs text-primary mt-0.5 truncate">{firestoreUser?.email || "usuario@ejemplo.com"}</p>
@@ -394,8 +455,8 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                         </div>
                     ))
                     : [
-                        { label: "Pedidos", value: "12" },
-                        { label: "Guardados", value: `${wishlist.length}` },
+                        { label: "Pedidos", value: `${ordersCount}` },
+                        { label: "Guardados", value: `${wishlistCount}` },
                         // { label: "Reseñas", value: "5" },
                     ].map(({ label, value }) => (
                         <div key={label} className="bg-card border border-border rounded-2xl p-3 text-center animate-in fade-in duration-300">
@@ -417,8 +478,8 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                     </div>
                 ))
                 : [
-                    { icon: ClipboardList, label: "Historial de pedidos", sub: "12 pedidos realizados" },
-                    { icon: Heart, label: "Lista de deseos", sub: `${wishlist.length} productos guardados` },
+                    { icon: ClipboardList, label: "Historial de pedidos", sub: `${ordersCount} pedidos realizados` },
+                    { icon: Heart, label: "Lista de deseos", sub: `${wishlistCount} productos guardados` },
                     // { icon: MapPin, label: "Mis direcciones", sub: "Pabellón A, Bloque 3" },
                     { icon: Store, label: sellerStatus ? "Mi negocio" : "Registrar mi negocio", sub: sellerStatus ? "Vendes en el campus" : "No estás registrado como vendedor" },
                     { icon: User, label: "Editar perfil", sub: "Actualiza tus datos personales" },
@@ -434,7 +495,49 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                                 setIsRegistering(true);
                             } else if (label === "Mi negocio" && sellerStatus) {
                                 setProfileSection("dashboard");
-                            } else {
+                            } else if (label === "Lista de deseos") {
+                                setShowWishlist(true);
+                                if (user?.uid) {
+                                    setIsWishlistLoading(true);
+                                    getWishlist(user.uid)
+                                        .then(async (productIds) => {
+                                            const products = await getProducts();
+                                            setWishlistItems(
+                                                products
+                                                    .filter((product) => productIds.includes(product.id))
+                                                    .map((product) => ({
+                                                        id: product.id,
+                                                        image: product.image,
+                                                        name: product.name,
+                                                        description: product.description,
+                                                        seller: product.seller,
+                                                    }))
+                                            );
+                                        })
+                                        .catch((error) => {
+                                            console.error("Error al cargar la lista de deseos:", error);
+                                            setWishlistItems([]);
+                                        })
+                                        .finally(() => setIsWishlistLoading(false));
+                                } else {
+                                    setWishlistItems([]);
+                                }
+                            } else if (label === "Historial de pedidos") {
+                                setShowOrders(true);
+                                if (user?.uid) {
+                                    setIsOrdersLoading(true);
+                                    getOrdersByUser(user.uid)
+                                        .then(setOrders)
+                                        .catch((error) => {
+                                            console.error("Error al cargar el historial de pedidos:", error);
+                                            setOrders([]);
+                                        })
+                                        .finally(() => setIsOrdersLoading(false));
+                                } else {
+                                    setOrders([]);
+                                }
+                            }    
+                            else {
                                 Swal.fire({
                                     icon: 'info',
                                     title: label,
@@ -630,6 +733,88 @@ export default function ProfileView({ view, user, wishlist = [] }: ProfileViewPr
                         >
                             Registrar negocio
                         </button>
+                    </div>
+                </div>
+            )}
+
+            {showWishlist && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-xl">
+                        <div className="mb-5 flex items-center justify-between">
+                            <div>
+                                <h3 className="text-lg font-bold text-foreground">Lista de deseos</h3>
+                                <p className="text-xs text-muted-foreground">Productos guardados</p>
+                            </div>
+                            <button
+                                type="button"
+                                className="text-sm text-primary hover:underline"
+                                onClick={() => setShowWishlist(false)}
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+                        {isWishlistLoading ? (
+                            <p className="text-sm text-muted-foreground">Cargando...</p>
+                        ) : wishlistItems.length ? (
+                            <ul className="max-h-64 space-y-2 overflow-y-auto">
+                                {wishlistItems.map((product) => (
+                                    <li key={product.id} className="flex gap-3 rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground">
+                                        {product.image && (
+                                            <img
+                                                src={product.image}
+                                                alt={product.name ?? "Producto"}
+                                                className="h-16 w-16 rounded-lg object-cover"
+                                            />
+                                        )}
+                                        <div className="min-w-0">
+                                            <p className="font-semibold">{product.name}</p>
+                                            <p className="truncate text-xs text-muted-foreground">{product.description}</p>
+                                            <p className="text-xs text-muted-foreground">Vendedor: {product.seller}</p>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-sm text-muted-foreground">No tienes productos guardados.</p>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {showOrders && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                    <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-xl">
+                        <div className="mb-5 flex items-center justify-between">
+                            <div>
+                                <h3 className="text-lg font-bold text-foreground">Historial de pedidos</h3>
+                                <p className="text-xs text-muted-foreground">Tus pedidos realizados</p>
+                            </div>
+                            <button
+                                type="button"
+                                className="text-sm text-primary hover:underline"
+                                onClick={() => setShowOrders(false)}
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+                        {isOrdersLoading ? (
+                            <p className="text-sm text-muted-foreground">Cargando...</p>
+                        ) : orders.length ? (
+                            <ul className="max-h-72 space-y-2 overflow-y-auto">
+                                {orders.map((order) => (
+                                    <li key={order.id} className="rounded-xl border border-border bg-background px-3 py-3 text-sm text-foreground">
+                                        <div className="flex items-center justify-between gap-3">
+                                            <p className="font-semibold">Pedido #{order.humanId ?? order.id}</p>
+                                            <span className="text-xs text-muted-foreground">{order.status ?? "Sin estado"}</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">Vendedor: {order.seller ?? "No disponible"}</p>
+                                        <p className="text-xs text-muted-foreground">{order.date ?? "Fecha no disponible"} · ${order.price ?? 0}</p>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-sm text-muted-foreground">No tienes pedidos realizados.</p>
+                        )}
                     </div>
                 </div>
             )}

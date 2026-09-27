@@ -392,6 +392,16 @@ export default function Marketplace() {
     }
   }, [lastDoc, activeCategory]);
 
+  const refreshProducts = useCallback(async () => {
+    try {
+      const result = await getProductsPage(activeCategory);
+      setProducts(result.products);
+      setLastDoc(result.lastDoc);
+    } catch (error) {
+      console.error("Error loading products:", error);
+    }
+  }, [activeCategory]);
+
   // ═══════════════════════════════════════════════════════════════════════════
   // 🎯 HANDLERS - Notificaciones
   // ═══════════════════════════════════════════════════════════════════════════
@@ -645,7 +655,10 @@ export default function Marketplace() {
       <header className="sticky top-0 z-40 bg-background/95 backdrop-blur-md border-b border-border">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
-            onClick={() => setView("home")}
+            onClick={() => {
+              setView("home");
+              refreshProducts();
+            }}
             className="flex items-center gap-2 shrink-0 mr-1"
           >
             <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center shadow-sm">

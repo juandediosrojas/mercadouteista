@@ -16,6 +16,7 @@ import GoogleIcon from "@mui/icons-material/Google";
 import ShoppingBagOutlinedIcon from "@mui/icons-material/ShoppingBagOutlined"
 import { useNavigate } from "react-router-dom";
 import Swal from "sweetalert2";
+import { getAuth, sendPasswordResetEmail } from "firebase/auth";
 import { useAuth } from "../contexts/AuthContext";
 
 export default function LoginView() {
@@ -81,6 +82,42 @@ export default function LoginView() {
         icon: "error",
         title: "Error al iniciar sesión con Google",
         text: error.message,
+      });
+    }
+  }
+
+  async function handleForgotPassword() {
+    const result = await Swal.fire({
+      title: "Restablecer contraseña",
+      input: "email",
+      inputLabel: "Correo electrónico",
+      inputValue: email,
+      inputPlaceholder: "correo@ejemplo.com",
+      showCancelButton: true,
+      confirmButtonText: "Enviar correo",
+      cancelButtonText: "Cancelar",
+      confirmButtonColor: "#34531F",
+      inputValidator: (value) =>
+        !value ? "Ingrese su correo electrónico" : null,
+    });
+
+    if (!result.isConfirmed || !result.value) return;
+
+    try {
+      await sendPasswordResetEmail(getAuth(), result.value);
+      Swal.fire({
+        icon: "success",
+        title: "Correo enviado",
+        text: "Revise su bandeja de entrada para restablecer la contraseña.",
+      });
+    } catch (error: any) {
+      Swal.fire({
+        icon: "error",
+        title: "No se pudo enviar el correo",
+        text:
+          error.code === "auth/user-not-found"
+            ? "No existe una cuenta asociada a ese correo."
+            : "Verifique el correo e inténtelo nuevamente.",
       });
     }
   }
@@ -229,6 +266,19 @@ export default function LoginView() {
                 Ingresar
               </Button>
 
+              <Button
+                type="button"
+                onClick={handleForgotPassword}
+                sx={{
+                  alignSelf: "center",
+                  color: "#6D100A",
+                  textTransform: "none",
+                  fontSize: 13,
+                }}
+              >
+                ¿Olvidaste tu contraseña?
+              </Button>
+
               <Divider sx={{ borderStyle: "dashed", borderColor: "#b8b0a0", color: "#575756", fontSize: 11 }}>
                 o
               </Divider>
@@ -267,7 +317,7 @@ export default function LoginView() {
               >
                 Crear una cuenta
               </Button>
-            </Stack>
+            </Stack>          
           </form>
         </CardContent>
       </Card>

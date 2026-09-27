@@ -6,6 +6,8 @@ import { getUser } from "../../firebase/userService";
 import { updateImage } from "../../firebase/storageService";
 import { getOrdersBySeller, statusChange } from "../../firebase/orderService";
 import Swal from "sweetalert2";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faEye, faPenToSquare, faToggleOff } from "@fortawesome/free-solid-svg-icons";
 
 type ViewType = "dashboard" | "products" | "edit";
 
@@ -43,35 +45,35 @@ interface SellerDashboardProps {
 
 /** Formatea moneda en formato USD */
 const formatCurrency = (value: number): string => {
-  return `$ ${new Intl.NumberFormat('en-US', { 
-    minimumFractionDigits: 2, 
-    maximumFractionDigits: 2 
+  return `$ ${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
   }).format(value)}`;
 };
 
 /** Parsea una fecha de Firestore */
 const parseFirebaseDate = (dateObj: any): Date | null => {
   if (!dateObj) return null;
-  
+
   if (typeof dateObj.toDate === 'function') {
     return dateObj.toDate();
   }
-  
+
   if (dateObj.seconds !== undefined) {
     return new Date(
       dateObj.seconds * 1000 + Math.round((dateObj.nanoseconds || 0) / 1e6)
     );
   }
-  
+
   if (dateObj instanceof Date) return dateObj;
-  
+
   return null;
 };
 
 /** Formatea fecha para mostrar */
 const formatDate = (date: Date | null): string => {
   if (!date || Number.isNaN(date.getTime())) return "-";
-  
+
   return date.toLocaleString("es-PE", {
     day: "2-digit",
     month: "short",
@@ -208,7 +210,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
       if (result.isConfirmed) {
         try {
           await disableProduct(id);
-          
+
           // ✅ Actualizar estado local
           setProducts((prevProducts) =>
             prevProducts.map((p) =>
@@ -964,7 +966,7 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
                                   fontWeight: 500
                                 }}
                               >
-                                Ver items
+                                <FontAwesomeIcon icon={faEye} style={{ color: "rgb(10, 93, 240)", }} /> Ver items
                               </button>
                             </div>
                           </td>
@@ -1016,10 +1018,10 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
                     padding: "12px 0",
                     borderBottom: "1px solid #e5e7eb"
                   }}>
-                    <img 
-                      src={item.image || ""} 
-                      alt={item.name} 
-                      style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover" }} 
+                    <img
+                      src={item.image || ""}
+                      alt={item.name}
+                      style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover" }}
                     />
                     <div style={{ flex: 1 }}>
                       <p style={{ margin: "0 0 4px 0", fontWeight: 600 }}>{item.name}</p>
@@ -1126,38 +1128,46 @@ const SellerDashboard: React.FC<SellerDashboardProps> = ({ uid, onBack }) => {
                       <td style={{ padding: "12px 10px" }}>{product.name}</td>
                       <td style={{ padding: "12px 10px" }}>{formatCurrency(product.price)}</td>
                       <td style={{ padding: "12px 10px" }}>{(product as any).stock ?? 0}</td>
-                      <td style={{ padding: "12px 10px", color: product.active === true ? "#047857" : "#dc2626" }}>
-                        {product.active === true ? "Activo" : "Inactivo"}
+                      <td style={{ padding: "12px 10px" }}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "6px 12px",
+                            borderRadius: 999,
+                            background: product.active === true ? "#d1fae5" : "#fee2e2",
+                            color: product.active === true ? "#047857" : "#b91c1c",
+                            fontWeight: 600,
+                            fontSize: 13,
+                          }}
+                        >
+                          {product.active === true ? "Activo" : "Inactivo"}
+                        </span>
                       </td>
                       <td style={{ padding: "12px 10px", display: "flex", gap: 8 }}>
                         <button
                           onClick={() => handleEditProduct(product)}
+                          title="Editar producto"
                           style={{
                             padding: "6px 12px",
-                            background: "#3b82f6",
-                            color: "white",
-                            border: "none",
-                            borderRadius: 6,
+                            borderRadius: 4,
                             cursor: "pointer",
-                            fontSize: 12,
+                            border: "1px solid #3b82f6",
                           }}
                         >
-                          Editar
+                          <FontAwesomeIcon icon={faPenToSquare} style={{ color: "rgb(10, 93, 240)", }} />
                         </button>
                         <button
                           disabled={!product.active}
                           onClick={() => handleDeleteProduct(product.id)}
+                          title="Inactivar producto"
                           style={{
                             padding: "6px 12px",
-                            background: product.active ? "#dc2626" : "#9ca3af",
                             cursor: product.active ? "pointer" : "not-allowed",
-                            color: "white",
-                            border: "none",
-                            borderRadius: 6,
-                            fontSize: 12,
+                            borderRadius: 4,
+                            border: "1px solid #3b82f6",
                           }}
                         >
-                          Inactivar
+                          <FontAwesomeIcon icon={faToggleOff} style={{ color: "rgb(10, 93, 240)", }} /> Inactivar
                         </button>
                       </td>
                     </tr>

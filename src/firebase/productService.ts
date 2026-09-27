@@ -15,18 +15,18 @@ import {
 import { db } from "./config";
 import { Product, Category, Seller } from "../app/types";
 
-// export async function getProducts(): Promise<Product[]> {
-//   console.log("Consultando productos...");
+export async function getProducts(): Promise<Product[]> {
+  console.log("Consultando productos...");
 
-//   const snapshot = await getDocs(collection(db, "products"));
+  const snapshot = await getDocs(collection(db, "products"));
 
-//   console.log("Cantidad:", snapshot.size);
+  console.log("Cantidad:", snapshot.size);
 
-//   return snapshot.docs.map(doc => ({
-//     id: doc.id,
-//     ...(doc.data() as Omit<Product, "id">),
-//   }));
-// }
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...(doc.data() as Omit<Product, "id">),
+  }));
+}
 
 export async function getProductsPage(
   category: string,
